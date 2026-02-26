@@ -10,6 +10,7 @@ from PIL import Image, ImageDraw
 from pynput import keyboard
 
 from capture import CaptureOverlay
+from platform_utils import default_save_folder
 
 # When frozen as exe, config lives next to the executable
 if getattr(sys, "frozen", False):
@@ -19,7 +20,19 @@ else:
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 
+DEFAULT_CONFIG = {
+  "save_folder": default_save_folder(),
+  "hotkey_region": "<ctrl>+<alt>+<shift>+s",
+  "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+d",
+  "format": "jpg",
+  "filename_prefix": "immedipaste",
+}
+
+
 def load_config():
+  if not os.path.exists(CONFIG_PATH):
+    save_config(DEFAULT_CONFIG)
+    return dict(DEFAULT_CONFIG)
   with open(CONFIG_PATH) as f:
     return json.load(f)
 
@@ -50,6 +63,10 @@ class ImmediPaste:
     self.config = load_config()
     self.capturing = False
     self.tray_icon = None
+    # Ensure save folder exists
+    folder = os.path.expanduser(self.config.get("save_folder", ""))
+    if folder:
+      os.makedirs(folder, exist_ok=True)
 
   def trigger_capture(self):
     """Launch region selection overlay in a new thread."""
