@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+d",
   "format": "jpg",
   "filename_prefix": "immedipaste",
+  "save_to_disk": True,
 }
 
 
@@ -79,6 +80,8 @@ class ImmediPaste:
         overlay = CaptureOverlay(
           save_folder=self.config["save_folder"],
           fmt=self.config.get("format", "jpg"),
+          save_to_disk=self.config.get("save_to_disk", True),
+          filename_prefix=self.config.get("filename_prefix", "immedipaste"),
           on_done=self._on_capture_done,
         )
         overlay.start()
@@ -98,6 +101,8 @@ class ImmediPaste:
         cap = CaptureOverlay(
           save_folder=self.config["save_folder"],
           fmt=self.config.get("format", "jpg"),
+          save_to_disk=self.config.get("save_to_disk", True),
+          filename_prefix=self.config.get("filename_prefix", "immedipaste"),
           on_done=self._on_capture_done,
         )
         cap.capture_fullscreen_direct()
@@ -124,7 +129,7 @@ class ImmediPaste:
       screen_w = root.winfo_screenwidth()
       screen_h = root.winfo_screenheight()
       win_w = 480
-      win_h = 295
+      win_h = 360
       x = screen_w - win_w - 16
       y = screen_h - win_h - 60
       root.geometry(f"{win_w}x{win_h}+{x}+{y}")
@@ -170,15 +175,28 @@ class ImmediPaste:
       fmt_menu.config(width=8)
       fmt_menu.grid(row=5, column=1, sticky="w", padx=4, pady=4)
 
+      # Filename prefix
+      tk.Label(root, text="Filename prefix:").grid(row=6, column=0, sticky="w", padx=8, pady=4)
+      prefix_var = tk.StringVar(value=self.config.get("filename_prefix", "immedipaste"))
+      tk.Entry(root, textvariable=prefix_var, width=40).grid(row=6, column=1, padx=4, pady=4)
+
+      # Save to disk toggle
+      save_disk_var = tk.BooleanVar(value=self.config.get("save_to_disk", True))
+      tk.Checkbutton(root, text="Also save screenshots to disk", variable=save_disk_var).grid(
+        row=7, column=0, columnspan=2, sticky="w", padx=8, pady=4,
+      )
+
       # Buttons
       btn_frame = tk.Frame(root)
-      btn_frame.grid(row=6, column=0, columnspan=3, pady=12)
+      btn_frame.grid(row=8, column=0, columnspan=3, pady=12)
 
       def on_save():
         self.config["save_folder"] = folder_var.get()
         self.config["hotkey_region"] = hotkey_var.get()
         self.config["hotkey_fullscreen"] = fs_hotkey_var.get()
         self.config["format"] = fmt_var.get()
+        self.config["filename_prefix"] = prefix_var.get()
+        self.config["save_to_disk"] = save_disk_var.get()
         save_config(self.config)
         root.destroy()
         self.reload_settings()

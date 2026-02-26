@@ -15,9 +15,11 @@ set_dpi_awareness()
 class CaptureOverlay:
   """Fullscreen overlay for region selection. Also supports full-screen capture."""
 
-  def __init__(self, save_folder, fmt="jpg", on_done=None):
+  def __init__(self, save_folder, fmt="jpg", save_to_disk=True, filename_prefix="immedipaste", on_done=None):
     self.save_folder = save_folder
     self.fmt = fmt.lower()
+    self.save_to_disk = save_to_disk
+    self.filename_prefix = filename_prefix
     self.on_done = on_done
     self.start_x = 0
     self.start_y = 0
@@ -156,28 +158,28 @@ class CaptureOverlay:
     self._stop_kb_listener()
     self.root.quit()
     cropped = self.screenshot.crop((x1, y1, x2, y2))
-    filepath = self._save(cropped)
     self._copy_to_clipboard(cropped)
-
-    if self.on_done:
-      self.on_done(filepath)
+    if self.save_to_disk:
+      filepath = self._save(cropped)
+      if self.on_done:
+        self.on_done(filepath)
 
   def _capture_fullscreen(self):
     """Capture the entire screen without selection."""
     self._stop_kb_listener()
     self.root.quit()
-    filepath = self._save(self.screenshot)
     self._copy_to_clipboard(self.screenshot)
-
-    if self.on_done:
-      self.on_done(filepath)
+    if self.save_to_disk:
+      filepath = self._save(self.screenshot)
+      if self.on_done:
+        self.on_done(filepath)
 
   def _save(self, image):
     folder = os.path.expanduser(self.save_folder)
     os.makedirs(folder, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     ext = self.fmt
-    filepath = os.path.join(folder, f"immedipaste_{timestamp}.{ext}")
+    filepath = os.path.join(folder, f"{self.filename_prefix}_{timestamp}.{ext}")
     if ext in ("jpg", "jpeg"):
       image.convert("RGB").save(filepath, "JPEG", quality=85)
     elif ext == "webp":
@@ -196,11 +198,11 @@ class CaptureOverlay:
       raw = sct.grab(monitor)
       screenshot = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
-    filepath = self._save(screenshot)
     self._copy_to_clipboard(screenshot)
-
-    if self.on_done:
-      self.on_done(filepath)
+    if self.save_to_disk:
+      filepath = self._save(screenshot)
+      if self.on_done:
+        self.on_done(filepath)
 
   def _cancel(self):
     self._stop_kb_listener()
