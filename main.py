@@ -1,5 +1,7 @@
 import json
 import os
+import platform
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -11,6 +13,8 @@ from pynput import keyboard
 
 from capture import CaptureOverlay
 from platform_utils import default_save_folder
+
+MAX_HISTORY = 5
 
 # When frozen as exe, config lives next to the executable
 if getattr(sys, "frozen", False):
@@ -64,6 +68,7 @@ class ImmediPaste:
     self.config = load_config()
     self.capturing = False
     self.tray_icon = None
+    self.capture_history = []
     # Ensure save folder exists
     folder = os.path.expanduser(self.config.get("save_folder", ""))
     if folder:
@@ -112,9 +117,27 @@ class ImmediPaste:
     threading.Thread(target=run, daemon=True).start()
 
   def _on_capture_done(self, filepath):
+    if filepath:
+      self.capture_history.append(filepath)
+      if len(self.capture_history) > MAX_HISTORY:
+        self.capture_history = self.capture_history[-MAX_HISTORY:]
+      self._rebuild_tray_menu()
     if self.tray_icon:
-      filename = os.path.basename(filepath)
-      self.tray_icon.notify(f"Saved: {filename}", "ImmediPaste")
+      if filepath:
+        self.tray_icon.notify(f"Saved: {os.path.basename(filepath)}", "ImmediPaste")
+      else:
+        self.tray_icon.notify("Copied to clipboard", "ImmediPaste")
+
+  @staticmethod
+  def _show_in_explorer(filepath):
+    """Open the file's parent folder and select the file."""
+    system = platform.system()
+    if system == "Windows":
+      subprocess.Popen(["explorer", "/select,", os.path.normpath(filepath)])
+    elif system == "Darwin":
+      subprocess.Popen(["open", "-R", filepath])
+    else:
+      subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
 
   def open_settings(self):
     """Open a settings dialog in a new thread."""
@@ -242,6 +265,40 @@ class ImmediPaste:
     self._listener.stop()
     self._start_hotkey_listener()
 
+  def _build_tray_menu(self):
+    """Build the tray menu, including recent captures if any."""
+    items = [
+      pystray.MenuItem(
+        "Capture Region  (Ctrl+Alt+Shift+S)",
+        lambda: self.trigger_capture(),
+      ),
+      pystray.MenuItem(
+        "Capture Fullscreen  (Ctrl+Alt+Shift+D)",
+        lambda: self.trigger_fullscreen(),
+      ),
+    ]
+
+    if self.capture_history:
+      items.append(pystray.Menu.SEPARATOR)
+      # Most recent first
+      for path in reversed(self.capture_history):
+        name = os.path.basename(path)
+        # Capture path in closure
+        items.append(pystray.MenuItem(
+          name, lambda _, p=path: self._show_in_explorer(p),
+        ))
+
+    items.append(pystray.Menu.SEPARATOR)
+    items.append(pystray.MenuItem("Settings", lambda: self.open_settings()))
+    items.append(pystray.MenuItem("Exit", lambda icon, item: icon.stop()))
+    return pystray.Menu(*items)
+
+  def _rebuild_tray_menu(self):
+    """Update the tray menu after a new capture."""
+    if self.tray_icon:
+      self.tray_icon.menu = self._build_tray_menu()
+      self.tray_icon.update_menu()
+
   def run(self):
     self._start_hotkey_listener()
 
@@ -250,19 +307,7 @@ class ImmediPaste:
       "immedipaste",
       create_tray_icon_image(),
       "ImmediPaste",
-      menu=pystray.Menu(
-        pystray.MenuItem(
-          "Capture Region  (Ctrl+Alt+Shift+S)",
-          lambda: self.trigger_capture(),
-        ),
-        pystray.MenuItem(
-          "Capture Fullscreen  (Ctrl+Alt+Shift+D)",
-          lambda: self.trigger_fullscreen(),
-        ),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Settings", lambda: self.open_settings()),
-        pystray.MenuItem("Exit", lambda icon, item: icon.stop()),
-      ),
+      menu=self._build_tray_menu(),
     )
 
     print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Fullscreen: Ctrl+Alt+Shift+D")

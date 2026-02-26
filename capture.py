@@ -159,20 +159,18 @@ class CaptureOverlay:
     self.root.quit()
     cropped = self.screenshot.crop((x1, y1, x2, y2))
     self._copy_to_clipboard(cropped)
-    if self.save_to_disk:
-      filepath = self._save(cropped)
-      if self.on_done:
-        self.on_done(filepath)
+    filepath = self._save(cropped) if self.save_to_disk else None
+    if self.on_done:
+      self.on_done(filepath)
 
   def _capture_fullscreen(self):
     """Capture the entire screen without selection."""
     self._stop_kb_listener()
     self.root.quit()
     self._copy_to_clipboard(self.screenshot)
-    if self.save_to_disk:
-      filepath = self._save(self.screenshot)
-      if self.on_done:
-        self.on_done(filepath)
+    filepath = self._save(self.screenshot) if self.save_to_disk else None
+    if self.on_done:
+      self.on_done(filepath)
 
   def _save(self, image):
     folder = os.path.expanduser(self.save_folder)
@@ -199,10 +197,9 @@ class CaptureOverlay:
       screenshot = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
 
     self._copy_to_clipboard(screenshot)
-    if self.save_to_disk:
-      filepath = self._save(screenshot)
-      if self.on_done:
-        self.on_done(filepath)
+    filepath = self._save(screenshot) if self.save_to_disk else None
+    if self.on_done:
+      self.on_done(filepath)
 
   def _cancel(self):
     self._stop_kb_listener()
