@@ -181,8 +181,9 @@ class ImmediPaste:
         self.config["format"] = fmt_var.get()
         save_config(self.config)
         root.destroy()
+        self.reload_settings()
         if self.tray_icon:
-          self.tray_icon.notify("Settings saved. Restart app for hotkey changes.", "ImmediPaste")
+          self.tray_icon.notify("Settings saved.", "ImmediPaste")
 
       tk.Button(btn_frame, text="Save", width=10, command=on_save).pack(side="left", padx=8)
       tk.Button(btn_frame, text="Cancel", width=10, command=root.destroy).pack(side="left", padx=8)
@@ -191,8 +192,8 @@ class ImmediPaste:
 
     threading.Thread(target=run_dialog, daemon=True).start()
 
-  def run(self):
-    # Set up hotkeys from config
+  def _start_hotkey_listener(self):
+    """Create and start a keyboard listener for the current hotkey config."""
     region_str = self.config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s")
     fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+d")
 
@@ -206,17 +207,25 @@ class ImmediPaste:
     )
 
     def on_press(k):
-      key = listener.canonical(k)
+      key = self._listener.canonical(k)
       hotkey_region.press(key)
       hotkey_fullscreen.press(key)
 
     def on_release(k):
-      key = listener.canonical(k)
+      key = self._listener.canonical(k)
       hotkey_region.release(key)
       hotkey_fullscreen.release(key)
 
-    listener = keyboard.Listener(on_press=on_press, on_release=on_release)
-    listener.start()
+    self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
+    self._listener.start()
+
+  def reload_settings(self):
+    """Reload hotkeys and settings without restarting."""
+    self._listener.stop()
+    self._start_hotkey_listener()
+
+  def run(self):
+    self._start_hotkey_listener()
 
     # System tray
     self.tray_icon = pystray.Icon(
@@ -240,7 +249,7 @@ class ImmediPaste:
 
     print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Fullscreen: Ctrl+Alt+Shift+D")
     self.tray_icon.run()
-    listener.stop()
+    self._listener.stop()
 
 
 if __name__ == "__main__":
