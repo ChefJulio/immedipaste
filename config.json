@@ -2,6 +2,6 @@
   "save_folder": "~/OneDrive/Pictures/Screenshots",
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+d",
-  "format": "png",
+  "format": "jpg",
   "filename_prefix": "immedipaste"
 }

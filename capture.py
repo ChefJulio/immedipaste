@@ -16,8 +16,9 @@ ctypes.windll.shcore.SetProcessDpiAwareness(2)
 class CaptureOverlay:
   """Fullscreen overlay for region selection. Also supports full-screen capture."""
 
-  def __init__(self, save_folder, on_done=None):
+  def __init__(self, save_folder, fmt="jpg", on_done=None):
     self.save_folder = save_folder
+    self.fmt = fmt.lower()
     self.on_done = on_done
     self.start_x = 0
     self.start_y = 0
@@ -168,8 +169,14 @@ class CaptureOverlay:
     folder = os.path.expanduser(self.save_folder)
     os.makedirs(folder, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    filepath = os.path.join(folder, f"immedipaste_{timestamp}.png")
-    image.save(filepath, "PNG")
+    ext = self.fmt
+    filepath = os.path.join(folder, f"immedipaste_{timestamp}.{ext}")
+    if ext in ("jpg", "jpeg"):
+      image.convert("RGB").save(filepath, "JPEG", quality=85)
+    elif ext == "webp":
+      image.save(filepath, "WEBP", quality=85)
+    else:
+      image.save(filepath, "PNG")
     return filepath
 
   def _copy_to_clipboard(self, image):

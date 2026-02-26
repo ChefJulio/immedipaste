@@ -55,6 +55,7 @@ class ImmedIPaste:
       try:
         overlay = CaptureOverlay(
           save_folder=self.config["save_folder"],
+          fmt=self.config.get("format", "jpg"),
           on_done=self._on_capture_done,
         )
         overlay.start()
@@ -73,6 +74,7 @@ class ImmedIPaste:
       try:
         cap = CaptureOverlay(
           save_folder=self.config["save_folder"],
+          fmt=self.config.get("format", "jpg"),
           on_done=self._on_capture_done,
         )
         cap.capture_fullscreen_direct()
@@ -99,7 +101,7 @@ class ImmedIPaste:
       screen_w = root.winfo_screenwidth()
       screen_h = root.winfo_screenheight()
       win_w = 480
-      win_h = 260
+      win_h = 295
       x = screen_w - win_w - 16
       y = screen_h - win_h - 60
       root.geometry(f"{win_w}x{win_h}+{x}+{y}")
@@ -138,14 +140,22 @@ class ImmedIPaste:
 
       tk.Label(root, text="e.g. <ctrl>+<alt>+<shift>+s", fg="gray").grid(row=4, column=1, sticky="w", padx=4)
 
+      # Image format
+      tk.Label(root, text="Save format:").grid(row=5, column=0, sticky="w", padx=8, pady=4)
+      fmt_var = tk.StringVar(value=self.config.get("format", "jpg"))
+      fmt_menu = tk.OptionMenu(root, fmt_var, "jpg", "png", "webp")
+      fmt_menu.config(width=8)
+      fmt_menu.grid(row=5, column=1, sticky="w", padx=4, pady=4)
+
       # Buttons
       btn_frame = tk.Frame(root)
-      btn_frame.grid(row=5, column=0, columnspan=3, pady=12)
+      btn_frame.grid(row=6, column=0, columnspan=3, pady=12)
 
       def on_save():
         self.config["save_folder"] = folder_var.get()
         self.config["hotkey_region"] = hotkey_var.get()
         self.config["hotkey_fullscreen"] = fs_hotkey_var.get()
+        self.config["format"] = fmt_var.get()
         save_config(self.config)
         root.destroy()
         if self.tray_icon:
