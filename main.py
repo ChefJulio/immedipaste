@@ -252,6 +252,29 @@ class ImmediPaste:
     self._listener.stop()
 
 
+def acquire_single_instance():
+  """Ensure only one instance of ImmediPaste is running.
+
+  Returns the lock file handle (must stay open for the app's lifetime).
+  Exits with a message if another instance is already running.
+  """
+  import tempfile
+  lock_path = os.path.join(tempfile.gettempdir(), "immedipaste.lock")
+  lock_file = open(lock_path, "w")
+  try:
+    if sys.platform == "win32":
+      import msvcrt
+      msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+      import fcntl
+      fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+  except (OSError, IOError):
+    print("ImmediPaste is already running.")
+    sys.exit(0)
+  return lock_file
+
+
 if __name__ == "__main__":
+  _lock = acquire_single_instance()
   app = ImmediPaste()
   app.run()
