@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import threading
 import tkinter as tk
 from tkinter import filedialog
@@ -10,7 +11,12 @@ from pynput import keyboard
 
 from capture import CaptureOverlay
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+# When frozen as exe, config lives next to the executable
+if getattr(sys, "frozen", False):
+  APP_DIR = os.path.dirname(sys.executable)
+else:
+  APP_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 
 def load_config():
@@ -39,7 +45,7 @@ def create_tray_icon_image():
   return img
 
 
-class ImmedIPaste:
+class ImmediPaste:
   def __init__(self):
     self.config = load_config()
     self.capturing = False
@@ -86,13 +92,13 @@ class ImmedIPaste:
   def _on_capture_done(self, filepath):
     if self.tray_icon:
       filename = os.path.basename(filepath)
-      self.tray_icon.notify(f"Saved: {filename}", "ImmedIPaste")
+      self.tray_icon.notify(f"Saved: {filename}", "ImmediPaste")
 
   def open_settings(self):
     """Open a settings dialog in a new thread."""
     def run_dialog():
       root = tk.Tk()
-      root.title("ImmedIPaste Settings")
+      root.title("ImmediPaste Settings")
       root.resizable(False, False)
       root.attributes("-topmost", True)
 
@@ -159,7 +165,7 @@ class ImmedIPaste:
         save_config(self.config)
         root.destroy()
         if self.tray_icon:
-          self.tray_icon.notify("Settings saved. Restart app for hotkey changes.", "ImmedIPaste")
+          self.tray_icon.notify("Settings saved. Restart app for hotkey changes.", "ImmediPaste")
 
       tk.Button(btn_frame, text="Save", width=10, command=on_save).pack(side="left", padx=8)
       tk.Button(btn_frame, text="Cancel", width=10, command=root.destroy).pack(side="left", padx=8)
@@ -199,7 +205,7 @@ class ImmedIPaste:
     self.tray_icon = pystray.Icon(
       "immedipaste",
       create_tray_icon_image(),
-      "ImmedIPaste",
+      "ImmediPaste",
       menu=pystray.Menu(
         pystray.MenuItem(
           "Capture Region  (Ctrl+Alt+Shift+S)",
@@ -215,11 +221,11 @@ class ImmedIPaste:
       ),
     )
 
-    print("ImmedIPaste running. Region: Ctrl+Alt+Shift+S | Fullscreen: Ctrl+Alt+Shift+D")
+    print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Fullscreen: Ctrl+Alt+Shift+D")
     self.tray_icon.run()
     listener.stop()
 
 
 if __name__ == "__main__":
-  app = ImmedIPaste()
+  app = ImmediPaste()
   app.run()

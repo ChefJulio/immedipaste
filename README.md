@@ -1,6 +1,8 @@
-# ImmedIPaste
+# ImmediPaste
 
-Lightweight Windows screenshot tool that captures a screen region (or full screen) and immediately copies it to your clipboard -- ready to paste. Screenshots are also saved to disk.
+Lightweight screenshot tool that captures a screen region (or full screen) and immediately copies it to your clipboard -- ready to paste. Screenshots are also saved to disk.
+
+Works on **Windows**, **macOS**, and **Linux**.
 
 ## Features
 
@@ -10,6 +12,7 @@ Lightweight Windows screenshot tool that captures a screen region (or full scree
 - **System tray** -- runs quietly in the background
 - **Configurable hotkeys** -- change shortcuts via the settings dialog
 - **Cross-monitor** -- works across multiple displays
+- **Format selection** -- save as jpg (default), png, or webp
 
 ## Hotkeys
 
@@ -29,10 +32,21 @@ Inside the region overlay:
 pip install -r requirements.txt
 ```
 
-### Requirements
+### Platform requirements
 
-- Python 3.10+
-- Windows 10/11
+| Platform | Requirements |
+|---|---|
+| **Windows** | Python 3.10+, Windows 10/11 |
+| **macOS** | Python 3.10+, tkinter (`brew install python-tk`) |
+| **Linux** | Python 3.10+, tkinter, one of: `xclip`, `xsel`, or `wl-copy` |
+
+Linux clipboard setup:
+```bash
+# X11
+sudo apt install xclip
+# or Wayland
+sudo apt install wl-clipboard
+```
 
 ## Usage
 
@@ -51,7 +65,7 @@ Settings are stored in `config.json` and can be edited via the tray menu **Setti
   "save_folder": "~/OneDrive/Pictures/Screenshots",
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+d",
-  "format": "png",
+  "format": "jpg",
   "filename_prefix": "immedipaste"
 }
 ```

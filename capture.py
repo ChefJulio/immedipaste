@@ -1,16 +1,15 @@
-import ctypes
-import io
 import os
+import platform
 import tkinter as tk
 from datetime import datetime
 
 import mss
-import win32clipboard
 from PIL import Image, ImageTk
 from pynput import keyboard as kb
 
-# Make tkinter DPI-aware so coordinates match actual screen pixels
-ctypes.windll.shcore.SetProcessDpiAwareness(2)
+from platform_utils import copy_image_to_clipboard, set_dpi_awareness
+
+set_dpi_awareness()
 
 
 class CaptureOverlay:
@@ -72,19 +71,27 @@ class CaptureOverlay:
     self.canvas.bind("<ButtonRelease-1>", self._on_release)
     self.root.bind("<Button-3>", lambda e: self._cancel())
 
-    # Use pynput for keyboard since overrideredirect windows
-    # don't receive keyboard events on Windows
-    def on_key_press(key):
-      if key == kb.Key.esc:
-        self.root.after(0, self._cancel)
-        return False  # stop listener
-      if key in (kb.Key.enter, kb.Key.space):
-        self.root.after(0, self._capture_fullscreen)
-        return False
-    self._kb_listener = kb.Listener(on_press=on_key_press)
-    self._kb_listener.start()
+    if platform.system() == "Windows":
+      # overrideredirect windows don't receive keyboard events on Windows,
+      # so use pynput to catch keys at the OS level
+      def on_key_press(key):
+        if key == kb.Key.esc:
+          self.root.after(0, self._cancel)
+          return False
+        if key in (kb.Key.enter, kb.Key.space):
+          self.root.after(0, self._capture_fullscreen)
+          return False
+      self._kb_listener = kb.Listener(on_press=on_key_press)
+      self._kb_listener.start()
+    else:
+      # macOS/Linux: tkinter keyboard events work normally
+      self.root.bind("<Escape>", lambda e: self._cancel())
+      self.root.bind("<Return>", lambda e: self._capture_fullscreen())
+      self.root.bind("<space>", lambda e: self._capture_fullscreen())
 
     self.root.deiconify()
+    if platform.system() != "Windows":
+      self.root.focus_force()
     self.root.mainloop()
     # Clean up after mainloop exits (quit was called)
     try:
@@ -180,15 +187,7 @@ class CaptureOverlay:
     return filepath
 
   def _copy_to_clipboard(self, image):
-    buf = io.BytesIO()
-    image.convert("RGB").save(buf, "BMP")
-    bmp_data = buf.getvalue()[14:]  # Strip 14-byte BMP file header
-    buf.close()
-
-    win32clipboard.OpenClipboard()
-    win32clipboard.EmptyClipboard()
-    win32clipboard.SetClipboardData(win32clipboard.CF_DIB, bmp_data)
-    win32clipboard.CloseClipboard()
+    copy_image_to_clipboard(image)
 
   def capture_fullscreen_direct(self):
     """Capture entire screen immediately, no overlay."""
