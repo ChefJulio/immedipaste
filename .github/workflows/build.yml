@@ -38,6 +38,21 @@ jobs:
       - name: Build executable
         run: pyinstaller --onefile --noconsole --name ImmediPaste main.py
 
+      - name: Sign executable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          SIGNING_CERT_PFX: ${{ secrets.SIGNING_CERT_PFX }}
+          SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          $pfxBytes = [Convert]::FromBase64String($env:SIGNING_CERT_PFX)
+          $pfxPath = Join-Path $env:RUNNER_TEMP "cert.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, $pfxBytes)
+          $password = ConvertTo-SecureString -String $env:SIGNING_CERT_PASSWORD -Force -AsPlainText
+          Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          Set-AuthenticodeSignature -FilePath "dist\${{ matrix.build_name }}" -Certificate (Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Select-Object -First 1) -TimestampServer "http://timestamp.digicert.com"
+          Remove-Item $pfxPath
+
       - name: Rename artifact
         run: |
           cp dist/${{ matrix.build_name }} dist/${{ matrix.artifact }}
