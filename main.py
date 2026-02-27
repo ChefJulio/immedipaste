@@ -30,7 +30,8 @@ CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 DEFAULT_CONFIG = {
   "save_folder": default_save_folder(),
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
-  "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+d",
+  "hotkey_window": "<ctrl>+<alt>+<shift>+d",
+  "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+f",
   "format": "jpg",
   "filename_prefix": "immedipaste",
   "save_to_disk": True,
@@ -84,6 +85,7 @@ def create_tray_icon():
 class HotkeyBridge(QObject):
   """Bridge pynput hotkey events to Qt's main thread via signals."""
   region_triggered = Signal()
+  window_triggered = Signal()
   fullscreen_triggered = Signal()
 
 
@@ -91,7 +93,7 @@ class SettingsDialog(QDialog):
   def __init__(self, config, parent=None):
     super().__init__(parent)
     self.setWindowTitle("ImmediPaste Settings")
-    self.setFixedSize(480, 380)
+    self.setFixedSize(480, 420)
     self._position_near_tray()
 
     layout = QVBoxLayout(self)
@@ -118,8 +120,12 @@ class SettingsDialog(QDialog):
     self.hotkey_edit = QLineEdit(config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s"))
     form.addRow("Region hotkey:", self.hotkey_edit)
 
+    # Window hotkey
+    self.win_hotkey_edit = QLineEdit(config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d"))
+    form.addRow("Window hotkey:", self.win_hotkey_edit)
+
     # Fullscreen hotkey
-    self.fs_hotkey_edit = QLineEdit(config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+d"))
+    self.fs_hotkey_edit = QLineEdit(config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f"))
     form.addRow("Fullscreen hotkey:", self.fs_hotkey_edit)
 
     # Hint
@@ -173,6 +179,7 @@ class SettingsDialog(QDialog):
     return {
       "save_folder": self.folder_edit.text(),
       "hotkey_region": self.hotkey_edit.text(),
+      "hotkey_window": self.win_hotkey_edit.text(),
       "hotkey_fullscreen": self.fs_hotkey_edit.text(),
       "format": self.fmt_combo.currentText(),
       "filename_prefix": self.prefix_edit.text(),
@@ -206,6 +213,22 @@ class ImmediPaste:
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "immedipaste"),
       on_done=self._on_capture_done,
+    )
+    self._overlay.start()
+
+  def trigger_window_capture(self):
+    """Open the window capture overlay."""
+    if self.capturing:
+      return
+    self.capturing = True
+
+    self._overlay = CaptureOverlay(
+      save_folder=self.config["save_folder"],
+      fmt=self.config.get("format", "jpg"),
+      save_to_disk=self.config.get("save_to_disk", True),
+      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      on_done=self._on_capture_done,
+      mode="window",
     )
     self._overlay.start()
 
@@ -272,11 +295,16 @@ class ImmediPaste:
 
   def _start_hotkey_listener(self):
     region_str = self.config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s")
-    fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+d")
+    window_str = self.config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d")
+    fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f")
 
     hotkey_region = keyboard.HotKey(
       keyboard.HotKey.parse(region_str),
       self.hotkey_bridge.region_triggered.emit,
+    )
+    hotkey_window = keyboard.HotKey(
+      keyboard.HotKey.parse(window_str),
+      self.hotkey_bridge.window_triggered.emit,
     )
     hotkey_fullscreen = keyboard.HotKey(
       keyboard.HotKey.parse(fullscreen_str),
@@ -286,11 +314,13 @@ class ImmediPaste:
     def on_press(k):
       key = self._listener.canonical(k)
       hotkey_region.press(key)
+      hotkey_window.press(key)
       hotkey_fullscreen.press(key)
 
     def on_release(k):
       key = self._listener.canonical(k)
       hotkey_region.release(key)
+      hotkey_window.release(key)
       hotkey_fullscreen.release(key)
 
     self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
@@ -306,7 +336,10 @@ class ImmediPaste:
     region_action = self.tray_menu.addAction("Capture Region  (Ctrl+Alt+Shift+S)")
     region_action.triggered.connect(self.trigger_capture)
 
-    fullscreen_action = self.tray_menu.addAction("Capture Fullscreen  (Ctrl+Alt+Shift+D)")
+    window_action = self.tray_menu.addAction("Capture Window  (Ctrl+Alt+Shift+D)")
+    window_action.triggered.connect(self.trigger_window_capture)
+
+    fullscreen_action = self.tray_menu.addAction("Capture Fullscreen  (Ctrl+Alt+Shift+F)")
     fullscreen_action.triggered.connect(self.trigger_fullscreen)
 
     if self.capture_history:
@@ -332,6 +365,9 @@ class ImmediPaste:
     self.hotkey_bridge.region_triggered.connect(
       self.trigger_capture, Qt.ConnectionType.QueuedConnection,
     )
+    self.hotkey_bridge.window_triggered.connect(
+      self.trigger_window_capture, Qt.ConnectionType.QueuedConnection,
+    )
     self.hotkey_bridge.fullscreen_triggered.connect(
       self.trigger_fullscreen, Qt.ConnectionType.QueuedConnection,
     )
@@ -349,7 +385,7 @@ class ImmediPaste:
     self.tray_icon.messageClicked.connect(self._on_notification_clicked)
     self.tray_icon.show()
 
-    print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Fullscreen: Ctrl+Alt+Shift+D")
+    print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Window: Ctrl+Alt+Shift+D | Fullscreen: Ctrl+Alt+Shift+F")
 
     exit_code = self.app.exec()
     self._listener.stop()
