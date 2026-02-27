@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime
+from typing import Callable, TYPE_CHECKING
 
 import mss
 from PySide6.QtCore import Qt, QRect, QPoint
@@ -9,14 +12,19 @@ from PySide6.QtWidgets import QWidget
 from log import get_logger
 from platform_utils import copy_image_to_clipboard
 
+if TYPE_CHECKING:
+  from PySide6.QtGui import QPaintEvent, QMouseEvent, QKeyEvent
+
 log = get_logger("capture")
 
 
 class CaptureOverlay(QWidget):
   """Fullscreen overlay for region or window capture."""
 
-  def __init__(self, save_folder, fmt="jpg", save_to_disk=True,
-               filename_prefix="immedipaste", on_done=None, mode="region"):
+  def __init__(self, save_folder: str, fmt: str = "jpg", save_to_disk: bool = True,
+               filename_prefix: str = "immedipaste",
+               on_done: Callable[..., None] | None = None,
+               mode: str = "region"):
     super().__init__()
     self.save_folder = save_folder
     self.fmt = fmt.lower()
@@ -38,7 +46,7 @@ class CaptureOverlay(QWidget):
     self.dimmed_pixmap = None
     self.screenshot_pixmap = None
 
-  def start(self):
+  def start(self) -> None:
     """Take a screenshot and show the selection overlay."""
     try:
       self._take_screenshot()
@@ -70,7 +78,7 @@ class CaptureOverlay(QWidget):
     if self.mode == "window":
       self._overlay_hwnd = int(self.winId())
 
-  def _take_screenshot(self):
+  def _take_screenshot(self) -> None:
     """Capture all monitors using mss, store as QImage."""
     with mss.mss() as sct:
       monitor = sct.monitors[0]
@@ -81,7 +89,7 @@ class CaptureOverlay(QWidget):
       self.screen_left = monitor["left"]
       self.screen_top = monitor["top"]
 
-  def _prepare_dimmed(self):
+  def _prepare_dimmed(self) -> None:
     """Create a dimmed version of the screenshot for the overlay background."""
     self.screenshot_pixmap = QPixmap.fromImage(self.screenshot_qimage)
     self.dimmed_pixmap = self.screenshot_pixmap.copy()
@@ -91,7 +99,7 @@ class CaptureOverlay(QWidget):
 
   # -- Rendering --------------------------------------------------------
 
-  def _draw_highlight(self, painter, rect):
+  def _draw_highlight(self, painter: QPainter, rect: QRect) -> None:
     """Draw a bright selection region with border and dimension label."""
     painter.drawPixmap(rect, self.screenshot_pixmap, rect)
 
@@ -107,7 +115,7 @@ class CaptureOverlay(QWidget):
     label_y = rect.top() - 8 if rect.top() > 25 else rect.bottom() + 18
     painter.drawText(rect.left(), label_y, label)
 
-  def paintEvent(self, event):
+  def paintEvent(self, event: QPaintEvent) -> None:
     painter = QPainter(self)
     painter.drawPixmap(0, 0, self.dimmed_pixmap)
 
@@ -125,7 +133,7 @@ class CaptureOverlay(QWidget):
 
   # -- Mouse events -----------------------------------------------------
 
-  def mousePressEvent(self, event):
+  def mousePressEvent(self, event: QMouseEvent) -> None:
     if event.button() == Qt.MouseButton.RightButton:
       self._cancel()
       return
@@ -137,14 +145,14 @@ class CaptureOverlay(QWidget):
         self.current_pos = self.start_pos
         self.is_selecting = True
 
-  def mouseMoveEvent(self, event):
+  def mouseMoveEvent(self, event: QMouseEvent) -> None:
     if self.mode == "window":
       self._update_window_highlight(event.position().toPoint())
     elif self.is_selecting:
       self.current_pos = event.position().toPoint()
       self.update()
 
-  def mouseReleaseEvent(self, event):
+  def mouseReleaseEvent(self, event: QMouseEvent) -> None:
     if event.button() == Qt.MouseButton.LeftButton and self.is_selecting:
       self.is_selecting = False
       rect = QRect(self.start_pos, event.position().toPoint()).normalized()
@@ -156,7 +164,7 @@ class CaptureOverlay(QWidget):
 
   # -- Keyboard events --------------------------------------------------
 
-  def keyPressEvent(self, event):
+  def keyPressEvent(self, event: QKeyEvent) -> None:
     if event.key() == Qt.Key.Key_Escape:
       self._cancel()
     elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
@@ -164,7 +172,7 @@ class CaptureOverlay(QWidget):
 
   # -- Window detection -------------------------------------------------
 
-  def _update_window_highlight(self, pos):
+  def _update_window_highlight(self, pos: QPoint) -> None:
     """Detect the window under the cursor and highlight it."""
     from window_utils import get_cursor_pos, get_window_rect_at
 
@@ -193,7 +201,7 @@ class CaptureOverlay(QWidget):
       self.highlight_rect = None
       self.update()
 
-  def _capture_window(self):
+  def _capture_window(self) -> None:
     """Capture the currently highlighted window."""
     if self.highlight_rect and self.highlight_rect.width() > 2 and self.highlight_rect.height() > 2:
       cropped = self.screenshot_qimage.copy(self.highlight_rect)
@@ -203,7 +211,7 @@ class CaptureOverlay(QWidget):
 
   # -- Capture logic ----------------------------------------------------
 
-  def _finish_capture(self, qimage):
+  def _finish_capture(self, qimage: QImage) -> None:
     """Copy to clipboard, optionally save, notify parent, close."""
     clipboard_ok = copy_image_to_clipboard(qimage)
     filepath = self._save(qimage) if self.save_to_disk else None
@@ -219,11 +227,11 @@ class CaptureOverlay(QWidget):
     if self.on_done:
       self.on_done(filepath, error=error)
 
-  def _capture_fullscreen(self):
+  def _capture_fullscreen(self) -> None:
     """Capture the entire screen from the overlay."""
     self._finish_capture(self.screenshot_qimage)
 
-  def _save(self, qimage):
+  def _save(self, qimage: QImage) -> str | None:
     try:
       folder = os.path.expanduser(self.save_folder)
       os.makedirs(folder, exist_ok=True)
@@ -249,14 +257,14 @@ class CaptureOverlay(QWidget):
     log.debug("Saved screenshot: %s", filepath)
     return filepath
 
-  def _cancel(self):
+  def _cancel(self) -> None:
     self.close()
     if self.on_done:
       self.on_done(None, error=None)
 
   # -- Standalone (no overlay) ------------------------------------------
 
-  def capture_fullscreen_direct(self):
+  def capture_fullscreen_direct(self) -> None:
     """Capture entire screen immediately, no overlay."""
     try:
       self._take_screenshot()

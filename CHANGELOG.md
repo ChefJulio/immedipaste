@@ -6,7 +6,15 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v2 (current)
 
-- `-------` Add changelog maintenance workflow with placeholder hash convention
+- `-------` Code quality improvements: type hints, lock timeout, debounce, folder validation
+  - Added type hints (`from __future__ import annotations`) to all source modules
+  - Lock file now stores timestamp; stale locks (>1h) auto-broken on startup
+  - Config saves debounced (150ms QTimer) to prevent rapid writes during edits
+  - Settings dialog validates save folder path on change (warns if invalid/non-writable)
+  - Hotkey listener stop/restart wrapped in try/except with user-facing error notification
+  - Tray icon drawing coordinates extracted to named constants
+  - Added 18 new tests (test_improvements.py): lock timeout, debounce, dialog close flush, folder validation, listener errors, tray icon
+- `351938d` Add changelog maintenance workflow with placeholder hash convention
 - `1aada6f` Gitignore config.json, track ImmediPaste.spec
   - config.json removed from repo (auto-created from DEFAULT_CONFIG on first run)
   - ImmediPaste.spec was accidentally caught by *.spec gitignore glob -- now tracked

@@ -1,5 +1,7 @@
 """Centralized logging for ImmediPaste."""
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
@@ -9,7 +11,7 @@ from logging.handlers import RotatingFileHandler
 LOG_FILENAME = "immedipaste.log"
 
 
-def _resolve_log_dir():
+def _resolve_log_dir() -> str:
   """Pick a writable directory for the log file.
 
   Priority: app dir (next to exe) > %APPDATA%/ImmediPaste > temp dir.
@@ -73,7 +75,7 @@ _console_handler = logging.StreamHandler()
 _console_handler.setFormatter(_formatter)
 
 
-def get_logger(name):
+def get_logger(name: str) -> logging.Logger:
   """Get a named logger with file and console handlers."""
   logger = logging.getLogger(f"immedipaste.{name}")
   if not logger.handlers:

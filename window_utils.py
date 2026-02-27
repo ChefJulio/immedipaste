@@ -1,5 +1,7 @@
 """Platform-specific window detection for window capture mode."""
 
+from __future__ import annotations
+
 import platform
 
 from log import get_logger
@@ -46,7 +48,7 @@ if SYSTEM == "Windows":
   ]
   dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
 
-  def _is_cloaked(hwnd):
+  def _is_cloaked(hwnd: ctypes.wintypes.HWND) -> bool:
     """Check if a window is cloaked (hidden UWP/Store app)."""
     cloaked = ctypes.c_int(0)
     hr = dwmapi.DwmGetWindowAttribute(
@@ -55,7 +57,7 @@ if SYSTEM == "Windows":
     )
     return hr == 0 and cloaked.value != 0
 
-  def get_cursor_pos():
+  def get_cursor_pos() -> tuple[int, int]:
     """Return (x, y) physical screen coordinates of the cursor."""
     try:
       pt = ctypes.wintypes.POINT()
@@ -65,7 +67,7 @@ if SYSTEM == "Windows":
       log.warning("GetCursorPos failed: %s", e)
       return (0, 0)
 
-  def get_window_rect_at(x, y, exclude_hwnd=0):
+  def get_window_rect_at(x: int, y: int, exclude_hwnd: int = 0) -> tuple[int, int, int, int] | None:
     """Return (left, top, right, bottom) for the topmost window at (x, y).
 
     Enumerates all top-level windows in Z-order, skipping the excluded
@@ -121,10 +123,10 @@ if SYSTEM == "Windows":
     return result[0]
 
 else:
-  def get_cursor_pos():
+  def get_cursor_pos() -> tuple[int, int]:
     """Cursor position not available on this platform."""
     return (0, 0)
 
-  def get_window_rect_at(x, y, exclude_hwnd=0):
+  def get_window_rect_at(x: int, y: int, exclude_hwnd: int = 0) -> tuple[int, int, int, int] | None:
     """Window detection not available on this platform."""
     return None

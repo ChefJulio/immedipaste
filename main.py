@@ -1,16 +1,19 @@
+from __future__ import annotations
+
 import functools
 import json
 import os
 import platform
 import subprocess
 import sys
+from typing import Any, Callable, IO
 
-from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtCore import Qt, QObject, Signal, QTimer
 from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
 from PySide6.QtWidgets import (
   QApplication, QSystemTrayIcon, QMenu, QDialog, QFormLayout,
   QLineEdit, QComboBox, QCheckBox, QPushButton, QHBoxLayout,
-  QVBoxLayout, QLabel, QFileDialog,
+  QVBoxLayout, QLabel, QFileDialog, QWidget,
 )
 from pynput import keyboard
 
@@ -48,7 +51,7 @@ STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 STARTUP_REG_NAME = "ImmediPaste"
 
 
-def set_launch_on_startup(enabled):
+def set_launch_on_startup(enabled: bool) -> None:
   """Add or remove ImmediPaste from the Windows startup registry."""
   if sys.platform != "win32":
     return
@@ -71,7 +74,7 @@ def set_launch_on_startup(enabled):
     log.warning("Failed to update startup registry: %s", e)
 
 
-def migrate_config(config):
+def migrate_config(config: dict[str, Any]) -> bool:
   """Fill in missing keys from defaults and bump version. Returns True if changed."""
   version = config.get("config_version", 1)
   changed = False
@@ -91,7 +94,7 @@ def migrate_config(config):
   return changed
 
 
-def load_config():
+def load_config() -> dict[str, Any]:
   if not os.path.exists(CONFIG_PATH):
     log.info("No config found, creating defaults at %s", CONFIG_PATH)
     save_config(DEFAULT_CONFIG)
@@ -112,7 +115,7 @@ def load_config():
   return config
 
 
-def save_config(config):
+def save_config(config: dict[str, Any]) -> None:
   try:
     with open(CONFIG_PATH, "w") as f:
       json.dump(config, f, indent=2)
@@ -121,10 +124,21 @@ def save_config(config):
     log.error("Failed to save config: %s", e)
 
 
-def create_tray_icon():
+# Tray icon geometry (64x64 canvas)
+_ICON_SIZE = 64
+_ICON_BODY_COLOR = "#2196F3"
+_ICON_LENS_OUTER_COLOR = "white"
+_ICON_LENS_INNER_COLOR = "#1565C0"
+_ICON_BODY_RECT = (4, 16, 56, 40)
+_ICON_BODY_RADIUS = 8
+_ICON_LENS_OUTER = (22, 24, 20, 24)
+_ICON_LENS_INNER = (27, 29, 10, 14)
+_ICON_FLASH_RECT = (24, 10, 16, 8)
+
+
+def create_tray_icon() -> QIcon:
   """Generate a simple camera-style tray icon using QPainter."""
-  size = 64
-  pixmap = QPixmap(size, size)
+  pixmap = QPixmap(_ICON_SIZE, _ICON_SIZE)
   pixmap.fill(QColor(0, 0, 0, 0))
 
   painter = QPainter(pixmap)
@@ -132,20 +146,20 @@ def create_tray_icon():
   painter.setPen(Qt.PenStyle.NoPen)
 
   # Camera body
-  painter.setBrush(QColor("#2196F3"))
-  painter.drawRoundedRect(4, 16, 56, 40, 8, 8)
+  painter.setBrush(QColor(_ICON_BODY_COLOR))
+  painter.drawRoundedRect(*_ICON_BODY_RECT, _ICON_BODY_RADIUS, _ICON_BODY_RADIUS)
 
   # Lens outer
-  painter.setBrush(QColor("white"))
-  painter.drawEllipse(22, 24, 20, 24)
+  painter.setBrush(QColor(_ICON_LENS_OUTER_COLOR))
+  painter.drawEllipse(*_ICON_LENS_OUTER)
 
   # Lens inner
-  painter.setBrush(QColor("#1565C0"))
-  painter.drawEllipse(27, 29, 10, 14)
+  painter.setBrush(QColor(_ICON_LENS_INNER_COLOR))
+  painter.drawEllipse(*_ICON_LENS_INNER)
 
   # Flash bump
-  painter.setBrush(QColor("#2196F3"))
-  painter.drawRect(24, 10, 16, 8)
+  painter.setBrush(QColor(_ICON_BODY_COLOR))
+  painter.drawRect(*_ICON_FLASH_RECT)
 
   painter.end()
   return QIcon(pixmap)
@@ -162,7 +176,7 @@ class HotkeyEdit(QLineEdit):
   """Read-only line edit that records a key combination on press."""
   changed = Signal()
 
-  def __init__(self, value="", parent=None):
+  def __init__(self, value: str = "", parent: QWidget | None = None):
     super().__init__(parent)
     self.setReadOnly(True)
     self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -170,11 +184,11 @@ class HotkeyEdit(QLineEdit):
     self._recording = False
     self._update_display()
 
-  def hotkey(self):
+  def hotkey(self) -> str:
     """Return the pynput-format hotkey string."""
     return self._value
 
-  def _update_display(self):
+  def _update_display(self) -> None:
     if not self._value:
       self.setText("")
       return
@@ -248,7 +262,7 @@ class HotkeyEdit(QLineEdit):
     self.changed.emit()
 
   @staticmethod
-  def _key_to_pynput(key):
+  def _key_to_pynput(key: Qt.Key) -> str | None:
     """Convert a Qt key code to a pynput hotkey token."""
     if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
       return chr(key).lower()
@@ -275,20 +289,31 @@ class HotkeyEdit(QLineEdit):
     }.get(key)
 
 
+SAVE_DEBOUNCE_MS = 150
+
+
 class SettingsDialog(QDialog):
-  def __init__(self, config, on_change=None, parent=None):
+  def __init__(self, config: dict[str, Any],
+               on_change: Callable[[dict[str, Any]], None] | None = None,
+               parent: QWidget | None = None):
     super().__init__(parent)
     self._on_change = on_change
     self.setWindowTitle("ImmediPaste Settings")
     self.setFixedWidth(480)
     self._position_near_tray()
 
+    # Debounce timer for config saves
+    self._save_timer = QTimer(self)
+    self._save_timer.setSingleShot(True)
+    self._save_timer.setInterval(SAVE_DEBOUNCE_MS)
+    self._save_timer.timeout.connect(self._flush_change)
+
     layout = QVBoxLayout(self)
 
     # Form
     form = QFormLayout()
 
-    # Save folder + browse
+    # Save folder + browse + validation
     folder_row = QHBoxLayout()
     self.folder_edit = QLineEdit(config.get("save_folder", ""))
     browse_btn = QPushButton("Browse...")
@@ -296,6 +321,12 @@ class SettingsDialog(QDialog):
     folder_row.addWidget(self.folder_edit)
     folder_row.addWidget(browse_btn)
     form.addRow("Save folder:", folder_row)
+
+    self.folder_warning = QLabel("")
+    self.folder_warning.setStyleSheet("QLabel { color: #cc6600; font-size: 11px; }")
+    self.folder_warning.setWordWrap(True)
+    self.folder_warning.hide()
+    form.addRow("", self.folder_warning)
 
     # Region hotkey
     self.hotkey_edit = HotkeyEdit(config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s"))
@@ -349,17 +380,52 @@ class SettingsDialog(QDialog):
     self.save_disk_check.stateChanged.connect(self._emit_change)
     self.startup_check.stateChanged.connect(self._emit_change)
 
-  def _position_near_tray(self):
+  def done(self, result: int) -> None:
+    # Flush any pending debounced save before the dialog closes
+    if self._save_timer.isActive():
+      self._save_timer.stop()
+      self._flush_change()
+    super().done(result)
+
+  def _position_near_tray(self) -> None:
     screen = QApplication.primaryScreen().geometry()
     x = screen.width() - self.width() - 16
     y = screen.height() - self.height() - 60
     self.move(x, y)
 
-  def _emit_change(self, *_args):
+  def _emit_change(self, *_args: Any) -> None:
+    self._validate_folder()
+    if self._on_change:
+      self._save_timer.start()
+
+  def _flush_change(self) -> None:
+    """Actually push the config change after the debounce delay."""
     if self._on_change:
       self._on_change(self.get_config())
 
-  def _browse_folder(self):
+  def _validate_folder(self) -> None:
+    """Check if the save folder path is writable and show a warning if not."""
+    raw = self.folder_edit.text().strip()
+    if not raw:
+      self.folder_warning.hide()
+      return
+    folder = os.path.abspath(os.path.expanduser(raw))
+    if os.path.isdir(folder):
+      if os.access(folder, os.W_OK):
+        self.folder_warning.hide()
+      else:
+        self.folder_warning.setText("Folder exists but is not writable")
+        self.folder_warning.show()
+    else:
+      # Check if the parent exists and is writable (folder could be created)
+      parent = os.path.dirname(folder)
+      if os.path.isdir(parent) and os.access(parent, os.W_OK):
+        self.folder_warning.hide()
+      else:
+        self.folder_warning.setText("Folder does not exist and cannot be created")
+        self.folder_warning.show()
+
+  def _browse_folder(self) -> None:
     path = QFileDialog.getExistingDirectory(
       self, "Select Save Folder",
       os.path.expanduser(self.folder_edit.text()),
@@ -368,7 +434,7 @@ class SettingsDialog(QDialog):
       self.folder_edit.setText(path)
       self._emit_change()
 
-  def get_config(self):
+  def get_config(self) -> dict[str, Any]:
     return {
       "save_folder": self.folder_edit.text(),
       "hotkey_region": self.hotkey_edit.hotkey(),
@@ -382,13 +448,13 @@ class SettingsDialog(QDialog):
 
 
 class ImmediPaste:
-  def __init__(self):
-    self.config = load_config()
-    self.capturing = False
-    self.tray_icon = None
-    self.capture_history = []
-    self._overlay = None
-    self._last_capture_path = None
+  def __init__(self) -> None:
+    self.config: dict[str, Any] = load_config()
+    self.capturing: bool = False
+    self.tray_icon: QSystemTrayIcon | None = None
+    self.capture_history: list[str] = []
+    self._overlay: CaptureOverlay | None = None
+    self._last_capture_path: str | None = None
 
     # Ensure save folder exists
     folder = os.path.expanduser(self.config.get("save_folder", ""))
@@ -398,7 +464,7 @@ class ImmediPaste:
       except OSError as e:
         log.warning("Cannot create save folder '%s': %s", folder, e)
 
-  def trigger_capture(self):
+  def trigger_capture(self) -> None:
     """Open the region selection overlay."""
     if self.capturing:
       return
@@ -413,7 +479,7 @@ class ImmediPaste:
     )
     self._overlay.start()
 
-  def trigger_window_capture(self):
+  def trigger_window_capture(self) -> None:
     """Open the window capture overlay."""
     if self.capturing:
       return
@@ -439,7 +505,7 @@ class ImmediPaste:
     )
     self._overlay.start()
 
-  def trigger_fullscreen(self):
+  def trigger_fullscreen(self) -> None:
     """Capture full screen immediately, no overlay."""
     if self.capturing:
       return
@@ -454,7 +520,7 @@ class ImmediPaste:
     )
     overlay.capture_fullscreen_direct()
 
-  def _on_capture_done(self, filepath, error=None):
+  def _on_capture_done(self, filepath: str | None, error: str | None = None) -> None:
     self.capturing = False
     self._overlay = None
 
@@ -481,13 +547,13 @@ class ImmediPaste:
         QSystemTrayIcon.MessageIcon.Information, 3000,
       )
 
-  def _on_notification_clicked(self):
+  def _on_notification_clicked(self) -> None:
     """Open the most recent capture in file explorer."""
     if self._last_capture_path and os.path.exists(self._last_capture_path):
       self._show_in_explorer(self._last_capture_path)
 
   @staticmethod
-  def _show_in_explorer(filepath):
+  def _show_in_explorer(filepath: str) -> None:
     try:
       system = platform.system()
       if system == "Windows":
@@ -499,7 +565,7 @@ class ImmediPaste:
     except OSError as e:
       log.warning("Failed to open file explorer: %s", e)
 
-  def _apply_settings(self, new_config):
+  def _apply_settings(self, new_config: dict[str, Any]) -> None:
     """Called on every settings change for live auto-save."""
     old_config = dict(self.config)
     self.config.update(new_config)
@@ -508,18 +574,30 @@ class ImmediPaste:
     log.debug("Settings updated: %s",
       {k: v for k, v in new_config.items() if old_config.get(k) != v})
 
-  def open_settings(self):
+  def open_settings(self) -> None:
     # Pause hotkey listener so keypresses don't trigger captures
-    self._listener.stop()
+    try:
+      self._listener.stop()
+    except Exception as e:
+      log.warning("Failed to stop hotkey listener: %s", e)
 
     dialog = SettingsDialog(self.config, on_change=self._apply_settings)
     dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
     dialog.exec()
 
     # Restart listener with (possibly new) hotkeys
-    self._start_hotkey_listener()
+    try:
+      self._start_hotkey_listener()
+    except Exception as e:
+      log.error("Failed to restart hotkey listener: %s", e)
+      if self.tray_icon:
+        self.tray_icon.showMessage(
+          "ImmediPaste",
+          "Hotkeys stopped working. Try restarting the app.",
+          QSystemTrayIcon.MessageIcon.Warning, 5000,
+        )
 
-  def _start_hotkey_listener(self):
+  def _start_hotkey_listener(self) -> None:
     region_str = self.config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s")
     window_str = self.config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d")
     fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f")
@@ -570,11 +648,17 @@ class ImmediPaste:
     log.debug("Hotkey listener started (region=%s, window=%s, fullscreen=%s)",
       region_str, window_str, fullscreen_str)
 
-  def reload_settings(self):
-    self._listener.stop()
-    self._start_hotkey_listener()
+  def reload_settings(self) -> None:
+    try:
+      self._listener.stop()
+    except Exception as e:
+      log.warning("Failed to stop hotkey listener during reload: %s", e)
+    try:
+      self._start_hotkey_listener()
+    except Exception as e:
+      log.error("Failed to restart hotkey listener during reload: %s", e)
 
-  def _rebuild_tray_menu(self):
+  def _rebuild_tray_menu(self) -> None:
     self.tray_menu.clear()
 
     region_action = self.tray_menu.addAction("Capture Region  (Ctrl+Alt+Shift+S)")
@@ -600,7 +684,7 @@ class ImmediPaste:
     exit_action = self.tray_menu.addAction("Exit")
     exit_action.triggered.connect(self.app.quit)
 
-  def run(self):
+  def run(self) -> None:
     self.app = QApplication(sys.argv)
     self.app.setQuitOnLastWindowClosed(False)
 
@@ -639,21 +723,65 @@ class ImmediPaste:
     sys.exit(exit_code)
 
 
-def acquire_single_instance():
-  """Ensure only one instance of ImmediPaste is running."""
+LOCK_TIMEOUT_SECONDS = 3600  # 1 hour
+
+
+def acquire_single_instance() -> IO[str]:
+  """Ensure only one instance of ImmediPaste is running.
+
+  Uses a lock file with a timestamp. If the lock is held but the timestamp
+  is older than LOCK_TIMEOUT_SECONDS, the stale lock is broken and reacquired.
+  """
   import tempfile
   lock_path = os.path.join(tempfile.gettempdir(), "immedipaste.lock")
-  lock_file = open(lock_path, "w")
-  try:
+
+  def _try_lock(fh):
     if sys.platform == "win32":
       import msvcrt
-      msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+      msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
     else:
       import fcntl
-      fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-  except (OSError, IOError):
-    log.info("Another instance is already running, exiting")
-    sys.exit(0)
+      fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+  def _write_timestamp(fh):
+    import time
+    fh.seek(0)
+    fh.truncate()
+    fh.write(str(time.time()))
+    fh.flush()
+
+  lock_file = open(lock_path, "w")
+  try:
+    _try_lock(lock_file)
+  except OSError:
+    # Lock is held -- check if it's stale
+    import time
+    try:
+      with open(lock_path, "r") as f:
+        timestamp = float(f.read().strip())
+      age = time.time() - timestamp
+      if age > LOCK_TIMEOUT_SECONDS:
+        log.warning("Stale lock file (%.0fs old), breaking lock", age)
+        lock_file.close()
+        try:
+          os.remove(lock_path)
+        except OSError:
+          pass
+        lock_file = open(lock_path, "w")
+        try:
+          _try_lock(lock_file)
+        except OSError:
+          log.info("Another instance is already running, exiting")
+          sys.exit(0)
+      else:
+        log.info("Another instance is already running, exiting")
+        sys.exit(0)
+    except (ValueError, OSError):
+      # Can't read timestamp -- assume active
+      log.info("Another instance is already running, exiting")
+      sys.exit(0)
+
+  _write_timestamp(lock_file)
   return lock_file
 
 

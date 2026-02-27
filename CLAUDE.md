@@ -20,7 +20,7 @@ log.py              # Centralized logging with rotating file handler + fallback 
 platform_utils.py   # Cross-platform clipboard and default folder detection
 window_utils.py     # Windows-only window detection via Win32 ctypes/DWM APIs
 config.json         # User settings (gitignored, auto-created from DEFAULT_CONFIG on first run)
-test_*.py           # pytest test suite (46 tests)
+test_*.py           # pytest test suite (64 tests)
 ImmediPaste.spec    # PyInstaller build config (excluded Qt modules, UPX, no console)
 requirements.txt    # 3 deps: mss, pynput, PySide6
 ```
@@ -34,10 +34,11 @@ ImmediPaste (main.py) - not a QWidget, owns the QApplication
   |   |-- window_triggered signal
   |   `-- fullscreen_triggered signal
   |-- CaptureOverlay (QWidget): fullscreen overlay for selection
-  |-- SettingsDialog (QDialog): live config editing (auto-saves on change)
-  |   `-- HotkeyEdit (QLineEdit subclass): click-to-record hotkey widget
+  |-- SettingsDialog (QDialog): live config editing (debounced auto-save)
+  |   |-- HotkeyEdit (QLineEdit subclass): click-to-record hotkey widget
+  |   `-- Folder validation: warns on invalid/non-writable save paths
   |-- Config system: JSON with versioned schema + auto-migration
-  |-- Single instance lock: tempfile + msvcrt (Win) / fcntl (Unix)
+  |-- Single instance lock: tempfile + msvcrt (Win) / fcntl (Unix) + stale timeout
   |-- Capture history: last 5 file paths, shown in tray menu
   `-- Logging: file (rotating 1MB x3) + stderr, writable path fallback
 ```
@@ -56,7 +57,7 @@ ImmediPaste (main.py) - not a QWidget, owns the QApplication
 
 ### Single Instance Lock
 
-Uses `{tempdir}/immedipaste.lock` with `msvcrt.locking()` (Windows) or `fcntl.flock()` (Unix). Called at module load time. If another instance is running, the new process calls `sys.exit(0)` silently -- no error message, no QApplication created. If debugging "app won't start," check for a stale lock file.
+Uses `{tempdir}/immedipaste.lock` with `msvcrt.locking()` (Windows) or `fcntl.flock()` (Unix). Called at module load time. If another instance is running, the new process calls `sys.exit(0)` silently -- no error message, no QApplication created. **Stale lock timeout:** the lock file contains a timestamp. If the lock is held but the timestamp is older than `LOCK_TIMEOUT_SECONDS` (1 hour), the lock is considered stale and is broken automatically. This prevents permanent blocking after a crash.
 
 ### Capture History
 
@@ -129,6 +130,7 @@ Drawn programmatically with `QPainter` on a `QPixmap` (camera icon). No image as
 - Save failure during capture
 - Clipboard failure during capture ("Copied to disk but clipboard copy failed")
 - Window capture on non-Windows platform
+- Hotkey listener restart failure after settings dialog ("Hotkeys stopped working. Try restarting the app.")
 
 ### Errors Logged Only (silent to user)
 - Config save failures -- settings appear to work but may not persist
@@ -158,7 +160,7 @@ Drawn programmatically with `QPainter` on a `QPixmap` (camera icon). No image as
 ## Code Conventions
 
 - **2-space indent** throughout
-- **No type hints** in the codebase (despite global preferences -- this is the current state)
+- **Type hints** on all function signatures (`from __future__ import annotations` in every module)
 - **Hotkey format:** pynput syntax, e.g. `<ctrl>+<alt>+<shift>+s`
 - **Error handling:** all I/O wrapped in try/except. See Error Handling section for which errors are shown vs silent.
 - **No Unicode in git commits** (Windows console encoding issues)
@@ -175,7 +177,7 @@ python -m pytest test_capture.py -k save  # Filter by name
 
 Tests mock `mss` (no display needed), clipboard operations, and file I/O. QApplication is created once per test module.
 
-### What's Tested (46 tests)
+### What's Tested (64 tests)
 | Module | Tests | Covers |
 |--------|-------|--------|
 | test_capture.py | 10 | Save formats (jpg/png/webp), custom prefix, folder creation, invalid paths, callback flow, cancel |
@@ -184,6 +186,7 @@ Tests mock `mss` (no display needed), clipboard operations, and file I/O. QAppli
 | test_log.py | 7 | Logger creation, handlers, naming, deduplication, log dir resolution |
 | test_platform_utils.py | 4 | Clipboard success/failure, default folder platform checks |
 | test_integration.py | 10 | Full capture pipeline, clipboard-only mode, double-trigger blocking, history limit, config migration |
+| test_improvements.py | 18 | Lock file timeout/stale detection, config save debounce, dialog close flush, folder validation (incl. relative paths), listener error handling, tray icon constants |
 
 ### What's NOT Tested
 - pynput.Listener threading behavior
@@ -215,15 +218,15 @@ The spec file excludes unused Qt modules (QtNetwork, QtQml, QtQuick, QtSvg, and 
 
 2. **Hotkey parse failures are silent.** Invalid hotkey string in config.json -> `log.error()` + fall back to defaults. User never notified. If a user manually edits config.json with a bad hotkey, the app silently ignores it.
 
-3. **Save folder not validated at settings time.** User can type any path in the settings dialog. Validation only happens during capture in `_save()`. If path becomes invalid after config is saved, next capture fails.
+3. **Save folder validated at settings time.** SettingsDialog validates the save folder path on every change: shows a warning label if the folder doesn't exist and can't be created, or if it exists but isn't writable. Final validation still happens during capture in `_save()`.
 
-4. **Config save is not transactional.** `_emit_change()` fires on every widget change and calls `_apply_settings()` -> `save_config()`. If app crashes mid-save, last change could be lost.
+4. **Config save is debounced.** `_emit_change()` starts a `QTimer` (150ms). Rapid edits are batched into a single `save_config()` call. If app crashes mid-save, last change could be lost, but redundant writes during keystroke bursts are eliminated.
 
 5. **Notification click assumes file still exists.** `_on_notification_clicked()` checks `os.path.exists()` before opening. If file was deleted, silently does nothing.
 
 6. **`_overlay` reference lifecycle.** Set to `None` in `_on_capture_done()`. `self.capturing` flag prevents double-triggers, but the QWidget may still exist in memory until Python GC runs.
 
-7. **Stale lock file can prevent startup.** If the app crashes without releasing the lock, the lock file in `{tempdir}/immedipaste.lock` persists. New instances will exit silently. Delete the lock file manually to recover.
+7. **Stale lock file auto-recovery.** Lock file contains a timestamp. If the lock is older than `LOCK_TIMEOUT_SECONDS` (1 hour), it's automatically broken on next startup. Manual deletion is no longer needed for crash recovery.
 
 ## Common Tasks
 
@@ -253,11 +256,15 @@ The spec file excludes unused Qt modules (QtNetwork, QtQml, QtQuick, QtSvg, and 
 2. Check log for hotkey parse errors (invalid format in config.json)
 3. Verify config.json has valid pynput syntax for hotkey fields
 
+## Pre-Commit Checklist
+
+**Do ALL of these before every commit:**
+
+1. **Backfill changelog hashes.** Check `CHANGELOG.md` for any `-------` placeholders. Replace with actual commit hashes from `git log`.
+2. **Add changelog entry if notable.** If this commit includes a new feature, architectural change, config version bump, or build/deploy change, add an entry with `-------` as the hash (will be backfilled next commit).
+3. **No Unicode in commit message.** No emojis, checkmarks, arrows, or special symbols.
+4. **Run tests.** `python -m pytest -v` -- don't commit if tests fail.
+
 ## Version History
 
 See `CHANGELOG.md` for full commit history organized by config version era (v2 current, v1, pre-Qt tkinter era). Useful context when writing new config migrations or understanding why something was built a certain way.
-
-**Maintaining CHANGELOG.md:**
-1. When committing a notable change, add an entry with `-------` as the hash placeholder
-2. On the next changelog update, backfill pending `-------` placeholders with actual commit hashes from `git log`
-3. Not every commit needs an entry -- focus on architectural changes, new features, config version bumps, and build/deploy changes
