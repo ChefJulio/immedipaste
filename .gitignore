@@ -4,6 +4,6 @@ __pycache__/
 .claude/
 build/
 dist/
-*.spec
 *.pfx
 *.cer
+config.json

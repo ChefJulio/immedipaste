@@ -19,7 +19,7 @@ capture.py          # CaptureOverlay widget - region/window/fullscreen capture +
 log.py              # Centralized logging with rotating file handler + fallback dirs
 platform_utils.py   # Cross-platform clipboard and default folder detection
 window_utils.py     # Windows-only window detection via Win32 ctypes/DWM APIs
-config.json         # User settings (auto-created, auto-migrated)
+config.json         # User settings (gitignored, auto-created from DEFAULT_CONFIG on first run)
 test_*.py           # pytest test suite (46 tests)
 ImmediPaste.spec    # PyInstaller build config (excluded Qt modules, UPX, no console)
 requirements.txt    # 3 deps: mss, pynput, PySide6
@@ -90,7 +90,7 @@ Last 5 captures stored in `capture_history` list (`MAX_HISTORY = 5`). Shown in t
 
 ## Config System
 
-Config lives next to the executable (or script in dev). Schema is versioned (`config_version` field). When new keys are added to `DEFAULT_CONFIG`, bump `CONFIG_VERSION` and `migrate_config()` auto-fills missing keys on load. Never delete keys from `DEFAULT_CONFIG` without a migration path.
+**Not checked into git.** `config.json` is gitignored and auto-created from `DEFAULT_CONFIG` on first run. No need to ship a default -- `load_config()` handles the missing file case. Config lives next to the executable (or script in dev). Schema is versioned (`config_version` field). When new keys are added to `DEFAULT_CONFIG`, bump `CONFIG_VERSION` and `migrate_config()` auto-fills missing keys on load. Never delete keys from `DEFAULT_CONFIG` without a migration path.
 
 **Current DEFAULT_CONFIG (v2):**
 ```python
