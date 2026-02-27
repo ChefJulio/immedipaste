@@ -417,6 +417,16 @@ class ImmediPaste:
     """Open the window capture overlay."""
     if self.capturing:
       return
+
+    if platform.system() != "Windows":
+      log.warning("Window capture is not supported on this platform")
+      if self.tray_icon:
+        self.tray_icon.showMessage(
+          "ImmediPaste", "Window capture is only available on Windows",
+          QSystemTrayIcon.MessageIcon.Warning, 3000,
+        )
+      return
+
     self.capturing = True
 
     self._overlay = CaptureOverlay(

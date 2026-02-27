@@ -116,6 +116,15 @@ class TestCapturePipeline:
     call_args = ip.tray_icon.showMessage.call_args
     assert "Something broke" in call_args[0][1]
 
+  def test_window_capture_blocked_on_non_windows(self, tmp_path, monkeypatch):
+    ip = self._make_app(tmp_path, monkeypatch)
+    monkeypatch.setattr("main.platform.system", lambda: "Linux")
+    ip.trigger_window_capture()
+    assert ip.capturing is False  # never entered capturing state
+    ip.tray_icon.showMessage.assert_called_once()
+    msg = ip.tray_icon.showMessage.call_args[0][1]
+    assert "Windows" in msg
+
 
 # -- Config migration -------------------------------------------------------
 
