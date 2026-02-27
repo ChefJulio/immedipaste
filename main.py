@@ -35,7 +35,34 @@ DEFAULT_CONFIG = {
   "format": "jpg",
   "filename_prefix": "immedipaste",
   "save_to_disk": True,
+  "launch_on_startup": False,
 }
+
+STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+STARTUP_REG_NAME = "ImmediPaste"
+
+
+def set_launch_on_startup(enabled):
+  """Add or remove ImmediPaste from the Windows startup registry."""
+  if sys.platform != "win32":
+    return
+  import winreg
+  try:
+    key = winreg.OpenKey(
+      winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE,
+    )
+    if enabled:
+      exe = sys.executable if getattr(sys, "frozen", False) else None
+      if exe:
+        winreg.SetValueEx(key, STARTUP_REG_NAME, 0, winreg.REG_SZ, f'"{exe}"')
+    else:
+      try:
+        winreg.DeleteValue(key, STARTUP_REG_NAME)
+      except FileNotFoundError:
+        pass
+    winreg.CloseKey(key)
+  except OSError:
+    pass
 
 
 def load_config():
@@ -93,7 +120,7 @@ class SettingsDialog(QDialog):
   def __init__(self, config, parent=None):
     super().__init__(parent)
     self.setWindowTitle("ImmediPaste Settings")
-    self.setFixedSize(480, 420)
+    self.setFixedSize(480, 450)
     self._position_near_tray()
 
     layout = QVBoxLayout(self)
@@ -150,6 +177,11 @@ class SettingsDialog(QDialog):
     self.save_disk_check.setChecked(config.get("save_to_disk", True))
     layout.addWidget(self.save_disk_check)
 
+    # Launch on startup checkbox
+    self.startup_check = QCheckBox("Launch on startup")
+    self.startup_check.setChecked(config.get("launch_on_startup", False))
+    layout.addWidget(self.startup_check)
+
     # Buttons
     btn_layout = QHBoxLayout()
     btn_layout.addStretch()
@@ -184,6 +216,7 @@ class SettingsDialog(QDialog):
       "format": self.fmt_combo.currentText(),
       "filename_prefix": self.prefix_edit.text(),
       "save_to_disk": self.save_disk_check.isChecked(),
+      "launch_on_startup": self.startup_check.isChecked(),
     }
 
 
@@ -286,6 +319,7 @@ class ImmediPaste:
       new_config = dialog.get_config()
       self.config.update(new_config)
       save_config(self.config)
+      set_launch_on_startup(self.config.get("launch_on_startup", False))
       self.reload_settings()
       if self.tray_icon:
         self.tray_icon.showMessage(
