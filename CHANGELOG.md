@@ -6,7 +6,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v2 (current)
 
-- `-------` Code quality improvements: type hints, lock timeout, debounce, folder validation
+- `bfa9d67` Code quality improvements: type hints, lock timeout, debounce, folder validation
   - Added type hints (`from __future__ import annotations`) to all source modules
   - Lock file now stores timestamp; stale locks (>1h) auto-broken on startup
   - Config saves debounced (150ms QTimer) to prevent rapid writes during edits
