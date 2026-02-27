@@ -63,7 +63,7 @@ class TestSaveConfig:
 class TestDefaultConfig:
   def test_has_all_required_keys(self):
     required = [
-      "save_folder", "hotkey_region", "hotkey_window",
+      "config_version", "save_folder", "hotkey_region", "hotkey_window",
       "hotkey_fullscreen", "format", "filename_prefix",
       "save_to_disk", "launch_on_startup",
     ]

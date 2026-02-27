@@ -3,15 +3,56 @@
 import logging
 import os
 import sys
+import tempfile
 from logging.handlers import RotatingFileHandler
 
-# Mirror APP_DIR logic from main.py
-if getattr(sys, "frozen", False):
-  _app_dir = os.path.dirname(sys.executable)
-else:
-  _app_dir = os.path.dirname(os.path.abspath(__file__))
+LOG_FILENAME = "immedipaste.log"
 
-LOG_PATH = os.path.join(_app_dir, "immedipaste.log")
+
+def _resolve_log_dir():
+  """Pick a writable directory for the log file.
+
+  Priority: app dir (next to exe) > %APPDATA%/ImmediPaste > temp dir.
+  """
+  if getattr(sys, "frozen", False):
+    app_dir = os.path.dirname(sys.executable)
+  else:
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+
+  # Try app dir first (works in dev and portable installs)
+  test_path = os.path.join(app_dir, LOG_FILENAME)
+  try:
+    with open(test_path, "a"):
+      pass
+    return app_dir
+  except OSError:
+    pass
+
+  # Fall back to platform-appropriate app data dir
+  if sys.platform == "win32":
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+      log_dir = os.path.join(appdata, "ImmediPaste")
+      try:
+        os.makedirs(log_dir, exist_ok=True)
+        return log_dir
+      except OSError:
+        pass
+  else:
+    xdg = os.environ.get("XDG_STATE_HOME", os.path.expanduser("~/.local/state"))
+    log_dir = os.path.join(xdg, "immedipaste")
+    try:
+      os.makedirs(log_dir, exist_ok=True)
+      return log_dir
+    except OSError:
+      pass
+
+  # Last resort: temp dir
+  return tempfile.gettempdir()
+
+
+_log_dir = _resolve_log_dir()
+LOG_PATH = os.path.join(_log_dir, LOG_FILENAME)
 
 _formatter = logging.Formatter(
   "%(asctime)s [%(levelname)s] %(name)s: %(message)s",

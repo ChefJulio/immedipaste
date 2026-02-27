@@ -30,7 +30,10 @@ else:
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 
+CONFIG_VERSION = 2
+
 DEFAULT_CONFIG = {
+  "config_version": CONFIG_VERSION,
   "save_folder": default_save_folder(),
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_window": "<ctrl>+<alt>+<shift>+d",
@@ -68,6 +71,26 @@ def set_launch_on_startup(enabled):
     log.warning("Failed to update startup registry: %s", e)
 
 
+def migrate_config(config):
+  """Fill in missing keys from defaults and bump version. Returns True if changed."""
+  version = config.get("config_version", 1)
+  changed = False
+
+  # Add any keys introduced in newer versions
+  for key, default_val in DEFAULT_CONFIG.items():
+    if key not in config:
+      config[key] = default_val
+      log.info("Config migration: added '%s' = %r", key, default_val)
+      changed = True
+
+  if version < CONFIG_VERSION:
+    config["config_version"] = CONFIG_VERSION
+    changed = True
+    log.info("Config migrated from v%d to v%d", version, CONFIG_VERSION)
+
+  return changed
+
+
 def load_config():
   if not os.path.exists(CONFIG_PATH):
     log.info("No config found, creating defaults at %s", CONFIG_PATH)
@@ -75,7 +98,7 @@ def load_config():
     return dict(DEFAULT_CONFIG)
   try:
     with open(CONFIG_PATH) as f:
-      return json.load(f)
+      config = json.load(f)
   except json.JSONDecodeError as e:
     log.error("Corrupted config file, resetting to defaults: %s", e)
     save_config(DEFAULT_CONFIG)
@@ -83,6 +106,10 @@ def load_config():
   except OSError as e:
     log.error("Cannot read config file: %s", e)
     return dict(DEFAULT_CONFIG)
+
+  if migrate_config(config):
+    save_config(config)
+  return config
 
 
 def save_config(config):

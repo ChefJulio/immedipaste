@@ -1,8 +1,9 @@
 """Tests for the logging module."""
 
 import logging
+import os
 
-from log import get_logger, LOG_PATH
+from log import get_logger, LOG_PATH, _resolve_log_dir
 
 
 class TestGetLogger:
@@ -35,3 +36,10 @@ class TestGetLogger:
   def test_log_path_is_string(self):
     assert isinstance(LOG_PATH, str)
     assert LOG_PATH.endswith("immedipaste.log")
+
+
+class TestResolveLogDir:
+  def test_returns_writable_directory(self):
+    log_dir = _resolve_log_dir()
+    assert os.path.isdir(log_dir)
+    assert os.access(log_dir, os.W_OK)
