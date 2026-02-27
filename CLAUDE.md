@@ -256,3 +256,8 @@ The spec file excludes unused Qt modules (QtNetwork, QtQml, QtQuick, QtSvg, and 
 ## Version History
 
 See `CHANGELOG.md` for full commit history organized by config version era (v2 current, v1, pre-Qt tkinter era). Useful context when writing new config migrations or understanding why something was built a certain way.
+
+**Maintaining CHANGELOG.md:**
+1. When committing a notable change, add an entry with `-------` as the hash placeholder
+2. On the next changelog update, backfill pending `-------` placeholders with actual commit hashes from `git log`
+3. Not every commit needs an entry -- focus on architectural changes, new features, config version bumps, and build/deploy changes

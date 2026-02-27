@@ -2,8 +2,15 @@
 
 All notable changes to ImmediPaste, in reverse chronological order.
 
+Format: `hash` or `-------` (pending) followed by description. Pending hashes get backfilled on the next changelog update.
+
 ## Config v2 (current)
 
+- `-------` Add changelog maintenance workflow with placeholder hash convention
+- `1aada6f` Gitignore config.json, track ImmediPaste.spec
+  - config.json removed from repo (auto-created from DEFAULT_CONFIG on first run)
+  - ImmediPaste.spec was accidentally caught by *.spec gitignore glob -- now tracked
+- `30da872` Expand CLAUDE.md with comprehensive codebase docs, add CHANGELOG.md
 - `a6fae76` Add CLAUDE.md, block window capture on non-Windows platforms
 - `408734a` Add config versioning (v2), log path fallback, integration tests, gitignore log
   - Introduced `config_version` field and `migrate_config()` auto-fill
