@@ -116,20 +116,132 @@ class HotkeyBridge(QObject):
   fullscreen_triggered = Signal()
 
 
-class SettingsDialog(QDialog):
-  def __init__(self, config, parent=None):
+class HotkeyEdit(QLineEdit):
+  """Read-only line edit that records a key combination on press."""
+  changed = Signal()
+
+  def __init__(self, value="", parent=None):
     super().__init__(parent)
+    self.setReadOnly(True)
+    self.setCursor(Qt.CursorShape.PointingHandCursor)
+    self._value = value
+    self._recording = False
+    self._update_display()
+
+  def hotkey(self):
+    """Return the pynput-format hotkey string."""
+    return self._value
+
+  def _update_display(self):
+    if not self._value:
+      self.setText("")
+      return
+    parts = self._value.split("+")
+    nice = []
+    for p in parts:
+      p = p.strip()
+      if p.startswith("<") and p.endswith(">"):
+        nice.append(p[1:-1].capitalize())
+      else:
+        nice.append(p.upper())
+    self.setText(" + ".join(nice))
+
+  def mousePressEvent(self, event):
+    super().mousePressEvent(event)
+    self._recording = True
+    self.setText("Press a key combination...")
+    self.setStyleSheet("QLineEdit { background-color: #fff3cd; color: #856404; }")
+
+  def focusOutEvent(self, event):
+    super().focusOutEvent(event)
+    if self._recording:
+      self._recording = False
+      self._update_display()
+      self.setStyleSheet("")
+
+  def keyPressEvent(self, event):
+    if not self._recording:
+      return
+
+    key = event.key()
+    mods = event.modifiers()
+
+    # Ignore standalone modifier presses
+    if key in (Qt.Key.Key_Control, Qt.Key.Key_Shift,
+               Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+      return
+
+    # Escape cancels recording
+    if key == Qt.Key.Key_Escape:
+      self._recording = False
+      self._update_display()
+      self.setStyleSheet("")
+      self.clearFocus()
+      return
+
+    parts = []
+    if mods & Qt.KeyboardModifier.ControlModifier:
+      parts.append("<ctrl>")
+    if mods & Qt.KeyboardModifier.AltModifier:
+      parts.append("<alt>")
+    if mods & Qt.KeyboardModifier.ShiftModifier:
+      parts.append("<shift>")
+    if mods & Qt.KeyboardModifier.MetaModifier:
+      parts.append("<cmd>")
+
+    # Require at least one modifier for a global hotkey
+    if not parts:
+      return
+
+    key_str = self._key_to_pynput(key)
+    if not key_str:
+      return
+
+    parts.append(key_str)
+    self._value = "+".join(parts)
+    self._recording = False
+    self._update_display()
+    self.setStyleSheet("")
+    self.clearFocus()
+    self.changed.emit()
+
+  @staticmethod
+  def _key_to_pynput(key):
+    """Convert a Qt key code to a pynput hotkey token."""
+    if Qt.Key.Key_A <= key <= Qt.Key.Key_Z:
+      return chr(key).lower()
+    if Qt.Key.Key_0 <= key <= Qt.Key.Key_9:
+      return chr(key)
+    if Qt.Key.Key_F1 <= key <= Qt.Key.Key_F12:
+      return f"<f{key - Qt.Key.Key_F1 + 1}>"
+    return {
+      Qt.Key.Key_Space: "<space>",
+      Qt.Key.Key_Tab: "<tab>",
+      Qt.Key.Key_Return: "<enter>",
+      Qt.Key.Key_Enter: "<enter>",
+      Qt.Key.Key_Backspace: "<backspace>",
+      Qt.Key.Key_Delete: "<delete>",
+      Qt.Key.Key_Home: "<home>",
+      Qt.Key.Key_End: "<end>",
+      Qt.Key.Key_PageUp: "<page_up>",
+      Qt.Key.Key_PageDown: "<page_down>",
+      Qt.Key.Key_Up: "<up>",
+      Qt.Key.Key_Down: "<down>",
+      Qt.Key.Key_Left: "<left>",
+      Qt.Key.Key_Right: "<right>",
+      Qt.Key.Key_Insert: "<insert>",
+    }.get(key)
+
+
+class SettingsDialog(QDialog):
+  def __init__(self, config, on_change=None, parent=None):
+    super().__init__(parent)
+    self._on_change = on_change
     self.setWindowTitle("ImmediPaste Settings")
-    self.setFixedSize(480, 450)
+    self.setFixedWidth(480)
     self._position_near_tray()
 
     layout = QVBoxLayout(self)
-
-    # Description
-    desc = QLabel("Screenshot tool that captures and copies to clipboard instantly.")
-    desc.setStyleSheet("color: #555555;")
-    desc.setWordWrap(True)
-    layout.addWidget(desc)
 
     # Form
     form = QFormLayout()
@@ -144,21 +256,16 @@ class SettingsDialog(QDialog):
     form.addRow("Save folder:", folder_row)
 
     # Region hotkey
-    self.hotkey_edit = QLineEdit(config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s"))
+    self.hotkey_edit = HotkeyEdit(config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s"))
     form.addRow("Region hotkey:", self.hotkey_edit)
 
     # Window hotkey
-    self.win_hotkey_edit = QLineEdit(config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d"))
+    self.win_hotkey_edit = HotkeyEdit(config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d"))
     form.addRow("Window hotkey:", self.win_hotkey_edit)
 
     # Fullscreen hotkey
-    self.fs_hotkey_edit = QLineEdit(config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f"))
+    self.fs_hotkey_edit = HotkeyEdit(config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f"))
     form.addRow("Fullscreen hotkey:", self.fs_hotkey_edit)
-
-    # Hint
-    hint = QLabel("e.g. <ctrl>+<alt>+<shift>+s")
-    hint.setStyleSheet("color: gray;")
-    form.addRow("", hint)
 
     # Format
     self.fmt_combo = QComboBox()
@@ -182,22 +289,33 @@ class SettingsDialog(QDialog):
     self.startup_check.setChecked(config.get("launch_on_startup", False))
     layout.addWidget(self.startup_check)
 
-    # Buttons
+    # Close button
     btn_layout = QHBoxLayout()
     btn_layout.addStretch()
-    save_btn = QPushButton("Save")
-    save_btn.clicked.connect(self.accept)
-    cancel_btn = QPushButton("Cancel")
-    cancel_btn.clicked.connect(self.reject)
-    btn_layout.addWidget(save_btn)
-    btn_layout.addWidget(cancel_btn)
+    close_btn = QPushButton("Close")
+    close_btn.clicked.connect(self.accept)
+    btn_layout.addWidget(close_btn)
     layout.addLayout(btn_layout)
+
+    # Auto-save on any change
+    self.folder_edit.editingFinished.connect(self._emit_change)
+    self.hotkey_edit.changed.connect(self._emit_change)
+    self.win_hotkey_edit.changed.connect(self._emit_change)
+    self.fs_hotkey_edit.changed.connect(self._emit_change)
+    self.fmt_combo.currentTextChanged.connect(self._emit_change)
+    self.prefix_edit.editingFinished.connect(self._emit_change)
+    self.save_disk_check.stateChanged.connect(self._emit_change)
+    self.startup_check.stateChanged.connect(self._emit_change)
 
   def _position_near_tray(self):
     screen = QApplication.primaryScreen().geometry()
     x = screen.width() - self.width() - 16
     y = screen.height() - self.height() - 60
     self.move(x, y)
+
+  def _emit_change(self, *_args):
+    if self._on_change:
+      self._on_change(self.get_config())
 
   def _browse_folder(self):
     path = QFileDialog.getExistingDirectory(
@@ -206,13 +324,14 @@ class SettingsDialog(QDialog):
     )
     if path:
       self.folder_edit.setText(path)
+      self._emit_change()
 
   def get_config(self):
     return {
       "save_folder": self.folder_edit.text(),
-      "hotkey_region": self.hotkey_edit.text(),
-      "hotkey_window": self.win_hotkey_edit.text(),
-      "hotkey_fullscreen": self.fs_hotkey_edit.text(),
+      "hotkey_region": self.hotkey_edit.hotkey(),
+      "hotkey_window": self.win_hotkey_edit.hotkey(),
+      "hotkey_fullscreen": self.fs_hotkey_edit.hotkey(),
       "format": self.fmt_combo.currentText(),
       "filename_prefix": self.prefix_edit.text(),
       "save_to_disk": self.save_disk_check.isChecked(),
@@ -312,20 +431,22 @@ class ImmediPaste:
     else:
       subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
 
+  def _apply_settings(self, new_config):
+    """Called on every settings change for live auto-save."""
+    self.config.update(new_config)
+    save_config(self.config)
+    set_launch_on_startup(self.config.get("launch_on_startup", False))
+
   def open_settings(self):
-    dialog = SettingsDialog(self.config)
+    # Pause hotkey listener so keypresses don't trigger captures
+    self._listener.stop()
+
+    dialog = SettingsDialog(self.config, on_change=self._apply_settings)
     dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    if dialog.exec() == QDialog.DialogCode.Accepted:
-      new_config = dialog.get_config()
-      self.config.update(new_config)
-      save_config(self.config)
-      set_launch_on_startup(self.config.get("launch_on_startup", False))
-      self.reload_settings()
-      if self.tray_icon:
-        self.tray_icon.showMessage(
-          "ImmediPaste", "Settings saved.",
-          QSystemTrayIcon.MessageIcon.Information, 2000,
-        )
+    dialog.exec()
+
+    # Restart listener with (possibly new) hotkeys
+    self._start_hotkey_listener()
 
   def _start_hotkey_listener(self):
     region_str = self.config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s")
