@@ -3,14 +3,22 @@
 import os
 import platform
 
+from log import get_logger
+
 SYSTEM = platform.system()
+log = get_logger("platform")
 
 
 def copy_image_to_clipboard(qimage):
-  """Copy a QImage to the system clipboard. Cross-platform via Qt."""
-  from PySide6.QtWidgets import QApplication
-  clipboard = QApplication.clipboard()
-  clipboard.setImage(qimage)
+  """Copy a QImage to the system clipboard. Returns True on success."""
+  try:
+    from PySide6.QtWidgets import QApplication
+    clipboard = QApplication.clipboard()
+    clipboard.setImage(qimage)
+    return True
+  except Exception as e:
+    log.error("Failed to copy image to clipboard: %s", e)
+    return False
 
 
 def default_save_folder():

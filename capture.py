@@ -3,10 +3,13 @@ from datetime import datetime
 
 import mss
 from PySide6.QtCore import Qt, QRect, QPoint
-from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QCursor
+from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase, QCursor
 from PySide6.QtWidgets import QWidget
 
+from log import get_logger
 from platform_utils import copy_image_to_clipboard
+
+log = get_logger("capture")
 
 
 class CaptureOverlay(QWidget):
@@ -37,7 +40,14 @@ class CaptureOverlay(QWidget):
 
   def start(self):
     """Take a screenshot and show the selection overlay."""
-    self._take_screenshot()
+    try:
+      self._take_screenshot()
+    except Exception as e:
+      log.error("Failed to take screenshot: %s", e)
+      if self.on_done:
+        self.on_done(None, error=f"Screenshot failed: {e}")
+      return
+
     self._prepare_dimmed()
 
     self.setWindowFlags(
@@ -89,7 +99,8 @@ class CaptureOverlay(QWidget):
     painter.drawRect(rect)
 
     label = f"{rect.width()} x {rect.height()}"
-    font = QFont("Consolas", 11)
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+    font.setPointSize(11)
     font.setBold(True)
     painter.setFont(font)
     painter.setPen(QColor("#00aaff"))
@@ -194,41 +205,76 @@ class CaptureOverlay(QWidget):
 
   def _finish_capture(self, qimage):
     """Copy to clipboard, optionally save, notify parent, close."""
-    copy_image_to_clipboard(qimage)
+    clipboard_ok = copy_image_to_clipboard(qimage)
     filepath = self._save(qimage) if self.save_to_disk else None
     self.close()
+
+    if not clipboard_ok and not filepath:
+      error = "Capture failed: could not copy to clipboard or save to disk"
+    elif not clipboard_ok:
+      error = "Copied to disk but clipboard copy failed"
+    else:
+      error = None
+
     if self.on_done:
-      self.on_done(filepath)
+      self.on_done(filepath, error=error)
 
   def _capture_fullscreen(self):
     """Capture the entire screen from the overlay."""
     self._finish_capture(self.screenshot_qimage)
 
   def _save(self, qimage):
-    folder = os.path.expanduser(self.save_folder)
-    os.makedirs(folder, exist_ok=True)
+    try:
+      folder = os.path.expanduser(self.save_folder)
+      os.makedirs(folder, exist_ok=True)
+    except OSError as e:
+      log.error("Cannot create save folder '%s': %s", self.save_folder, e)
+      return None
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     ext = self.fmt
     filepath = os.path.join(folder, f"{self.filename_prefix}_{timestamp}.{ext}")
+
     if ext in ("jpg", "jpeg"):
-      qimage.save(filepath, "JPEG", 85)
+      ok = qimage.save(filepath, "JPEG", 85)
     elif ext == "webp":
-      qimage.save(filepath, "WEBP", 85)
+      ok = qimage.save(filepath, "WEBP", 85)
     else:
-      qimage.save(filepath, "PNG")
+      ok = qimage.save(filepath, "PNG")
+
+    if not ok:
+      log.error("Failed to save screenshot to %s", filepath)
+      return None
+
+    log.debug("Saved screenshot: %s", filepath)
     return filepath
 
   def _cancel(self):
     self.close()
     if self.on_done:
-      self.on_done(None)
+      self.on_done(None, error=None)
 
   # -- Standalone (no overlay) ------------------------------------------
 
   def capture_fullscreen_direct(self):
     """Capture entire screen immediately, no overlay."""
-    self._take_screenshot()
-    copy_image_to_clipboard(self.screenshot_qimage)
+    try:
+      self._take_screenshot()
+    except Exception as e:
+      log.error("Failed to take fullscreen screenshot: %s", e)
+      if self.on_done:
+        self.on_done(None, error=f"Screenshot failed: {e}")
+      return
+
+    clipboard_ok = copy_image_to_clipboard(self.screenshot_qimage)
     filepath = self._save(self.screenshot_qimage) if self.save_to_disk else None
+
+    if not clipboard_ok and not filepath:
+      error = "Capture failed: could not copy to clipboard or save to disk"
+    elif not clipboard_ok:
+      error = "Copied to disk but clipboard copy failed"
+    else:
+      error = None
+
     if self.on_done:
-      self.on_done(filepath)
+      self.on_done(filepath, error=error)

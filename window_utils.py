@@ -2,6 +2,9 @@
 
 import platform
 
+from log import get_logger
+
+log = get_logger("window")
 SYSTEM = platform.system()
 
 if SYSTEM == "Windows":
@@ -54,9 +57,13 @@ if SYSTEM == "Windows":
 
   def get_cursor_pos():
     """Return (x, y) physical screen coordinates of the cursor."""
-    pt = ctypes.wintypes.POINT()
-    user32.GetCursorPos(ctypes.byref(pt))
-    return (pt.x, pt.y)
+    try:
+      pt = ctypes.wintypes.POINT()
+      user32.GetCursorPos(ctypes.byref(pt))
+      return (pt.x, pt.y)
+    except OSError as e:
+      log.warning("GetCursorPos failed: %s", e)
+      return (0, 0)
 
   def get_window_rect_at(x, y, exclude_hwnd=0):
     """Return (left, top, right, bottom) for the topmost window at (x, y).
@@ -106,7 +113,11 @@ if SYSTEM == "Windows":
 
       return True
 
-    user32.EnumWindows(callback, 0)
+    try:
+      user32.EnumWindows(callback, 0)
+    except OSError as e:
+      log.warning("EnumWindows failed: %s", e)
+      return None
     return result[0]
 
 else:

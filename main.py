@@ -15,7 +15,10 @@ from PySide6.QtWidgets import (
 from pynput import keyboard
 
 from capture import CaptureOverlay
+from log import get_logger
 from platform_utils import default_save_folder
+
+log = get_logger("main")
 
 MAX_HISTORY = 5
 
@@ -61,22 +64,34 @@ def set_launch_on_startup(enabled):
       except FileNotFoundError:
         pass
     winreg.CloseKey(key)
-  except OSError:
-    pass
+  except OSError as e:
+    log.warning("Failed to update startup registry: %s", e)
 
 
 def load_config():
   if not os.path.exists(CONFIG_PATH):
+    log.info("No config found, creating defaults at %s", CONFIG_PATH)
     save_config(DEFAULT_CONFIG)
     return dict(DEFAULT_CONFIG)
-  with open(CONFIG_PATH) as f:
-    return json.load(f)
+  try:
+    with open(CONFIG_PATH) as f:
+      return json.load(f)
+  except json.JSONDecodeError as e:
+    log.error("Corrupted config file, resetting to defaults: %s", e)
+    save_config(DEFAULT_CONFIG)
+    return dict(DEFAULT_CONFIG)
+  except OSError as e:
+    log.error("Cannot read config file: %s", e)
+    return dict(DEFAULT_CONFIG)
 
 
 def save_config(config):
-  with open(CONFIG_PATH, "w") as f:
-    json.dump(config, f, indent=2)
-    f.write("\n")
+  try:
+    with open(CONFIG_PATH, "w") as f:
+      json.dump(config, f, indent=2)
+      f.write("\n")
+  except OSError as e:
+    log.error("Failed to save config: %s", e)
 
 
 def create_tray_icon():
@@ -351,7 +366,10 @@ class ImmediPaste:
     # Ensure save folder exists
     folder = os.path.expanduser(self.config.get("save_folder", ""))
     if folder:
-      os.makedirs(folder, exist_ok=True)
+      try:
+        os.makedirs(folder, exist_ok=True)
+      except OSError as e:
+        log.warning("Cannot create save folder '%s': %s", folder, e)
 
   def trigger_capture(self):
     """Open the region selection overlay."""
@@ -399,15 +417,25 @@ class ImmediPaste:
     )
     overlay.capture_fullscreen_direct()
 
-  def _on_capture_done(self, filepath):
+  def _on_capture_done(self, filepath, error=None):
     self.capturing = False
     self._overlay = None
+
+    if error:
+      log.error("Capture error: %s", error)
+      if self.tray_icon:
+        self.tray_icon.showMessage(
+          "ImmediPaste", error,
+          QSystemTrayIcon.MessageIcon.Critical, 4000,
+        )
+      return
 
     if filepath:
       self.capture_history.append(filepath)
       if len(self.capture_history) > MAX_HISTORY:
         self.capture_history = self.capture_history[-MAX_HISTORY:]
       self._last_capture_path = filepath
+      log.info("Captured: %s", filepath)
 
     if self.tray_icon:
       msg = os.path.basename(filepath) if filepath else "Copied to clipboard"
@@ -423,19 +451,25 @@ class ImmediPaste:
 
   @staticmethod
   def _show_in_explorer(filepath):
-    system = platform.system()
-    if system == "Windows":
-      subprocess.Popen(["explorer", "/select,", os.path.normpath(filepath)])
-    elif system == "Darwin":
-      subprocess.Popen(["open", "-R", filepath])
-    else:
-      subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
+    try:
+      system = platform.system()
+      if system == "Windows":
+        subprocess.Popen(["explorer", "/select,", os.path.normpath(filepath)])
+      elif system == "Darwin":
+        subprocess.Popen(["open", "-R", filepath])
+      else:
+        subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
+    except OSError as e:
+      log.warning("Failed to open file explorer: %s", e)
 
   def _apply_settings(self, new_config):
     """Called on every settings change for live auto-save."""
+    old_config = dict(self.config)
     self.config.update(new_config)
     save_config(self.config)
     set_launch_on_startup(self.config.get("launch_on_startup", False))
+    log.debug("Settings updated: %s",
+      {k: v for k, v in new_config.items() if old_config.get(k) != v})
 
   def open_settings(self):
     # Pause hotkey listener so keypresses don't trigger captures
@@ -453,18 +487,34 @@ class ImmediPaste:
     window_str = self.config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d")
     fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f")
 
-    hotkey_region = keyboard.HotKey(
-      keyboard.HotKey.parse(region_str),
-      self.hotkey_bridge.region_triggered.emit,
-    )
-    hotkey_window = keyboard.HotKey(
-      keyboard.HotKey.parse(window_str),
-      self.hotkey_bridge.window_triggered.emit,
-    )
-    hotkey_fullscreen = keyboard.HotKey(
-      keyboard.HotKey.parse(fullscreen_str),
-      self.hotkey_bridge.fullscreen_triggered.emit,
-    )
+    try:
+      hotkey_region = keyboard.HotKey(
+        keyboard.HotKey.parse(region_str),
+        self.hotkey_bridge.region_triggered.emit,
+      )
+      hotkey_window = keyboard.HotKey(
+        keyboard.HotKey.parse(window_str),
+        self.hotkey_bridge.window_triggered.emit,
+      )
+      hotkey_fullscreen = keyboard.HotKey(
+        keyboard.HotKey.parse(fullscreen_str),
+        self.hotkey_bridge.fullscreen_triggered.emit,
+      )
+    except ValueError as e:
+      log.error("Invalid hotkey configuration: %s", e)
+      # Fall back to defaults
+      hotkey_region = keyboard.HotKey(
+        keyboard.HotKey.parse("<ctrl>+<alt>+<shift>+s"),
+        self.hotkey_bridge.region_triggered.emit,
+      )
+      hotkey_window = keyboard.HotKey(
+        keyboard.HotKey.parse("<ctrl>+<alt>+<shift>+d"),
+        self.hotkey_bridge.window_triggered.emit,
+      )
+      hotkey_fullscreen = keyboard.HotKey(
+        keyboard.HotKey.parse("<ctrl>+<alt>+<shift>+f"),
+        self.hotkey_bridge.fullscreen_triggered.emit,
+      )
 
     def on_press(k):
       key = self._listener.canonical(k)
@@ -480,6 +530,8 @@ class ImmediPaste:
 
     self._listener = keyboard.Listener(on_press=on_press, on_release=on_release)
     self._listener.start()
+    log.debug("Hotkey listener started (region=%s, window=%s, fullscreen=%s)",
+      region_str, window_str, fullscreen_str)
 
   def reload_settings(self):
     self._listener.stop()
@@ -540,10 +592,13 @@ class ImmediPaste:
     self.tray_icon.messageClicked.connect(self._on_notification_clicked)
     self.tray_icon.show()
 
-    print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Window: Ctrl+Alt+Shift+D | Fullscreen: Ctrl+Alt+Shift+F")
+    log.info("ImmediPaste running (region=%s, window=%s, fullscreen=%s)",
+      self.config.get("hotkey_region"), self.config.get("hotkey_window"),
+      self.config.get("hotkey_fullscreen"))
 
     exit_code = self.app.exec()
     self._listener.stop()
+    log.info("ImmediPaste exiting")
     sys.exit(exit_code)
 
 
@@ -560,7 +615,7 @@ def acquire_single_instance():
       import fcntl
       fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
   except (OSError, IOError):
-    print("ImmediPaste is already running.")
+    log.info("Another instance is already running, exiting")
     sys.exit(0)
   return lock_file
 
