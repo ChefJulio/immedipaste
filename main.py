@@ -60,18 +60,25 @@ def set_launch_on_startup(enabled: bool) -> None:
     key = winreg.OpenKey(
       winreg.HKEY_CURRENT_USER, STARTUP_REG_KEY, 0, winreg.KEY_SET_VALUE,
     )
+  except OSError as e:
+    log.warning("Failed to open startup registry key: %s", e)
+    return
+  try:
     if enabled:
       exe = sys.executable if getattr(sys, "frozen", False) else None
       if exe:
         winreg.SetValueEx(key, STARTUP_REG_NAME, 0, winreg.REG_SZ, f'"{exe}"')
+      else:
+        log.debug("Launch on startup ignored: not running as frozen executable")
     else:
       try:
         winreg.DeleteValue(key, STARTUP_REG_NAME)
       except FileNotFoundError:
         pass
-    winreg.CloseKey(key)
   except OSError as e:
     log.warning("Failed to update startup registry: %s", e)
+  finally:
+    winreg.CloseKey(key)
 
 
 def migrate_config(config: dict[str, Any]) -> bool:
@@ -172,6 +179,24 @@ class HotkeyBridge(QObject):
   fullscreen_triggered = Signal()
 
 
+def format_hotkey_display(pynput_str: str) -> str:
+  """Convert pynput hotkey format to user-friendly display format.
+
+  '<ctrl>+<alt>+<shift>+s' -> 'Ctrl + Alt + Shift + S'
+  """
+  if not pynput_str:
+    return ""
+  parts = pynput_str.split("+")
+  nice = []
+  for p in parts:
+    p = p.strip()
+    if p.startswith("<") and p.endswith(">"):
+      nice.append(p[1:-1].capitalize())
+    else:
+      nice.append(p.upper())
+  return " + ".join(nice)
+
+
 class HotkeyEdit(QLineEdit):
   """Read-only line edit that records a key combination on press."""
   changed = Signal()
@@ -189,18 +214,7 @@ class HotkeyEdit(QLineEdit):
     return self._value
 
   def _update_display(self) -> None:
-    if not self._value:
-      self.setText("")
-      return
-    parts = self._value.split("+")
-    nice = []
-    for p in parts:
-      p = p.strip()
-      if p.startswith("<") and p.endswith(">"):
-        nice.append(p[1:-1].capitalize())
-      else:
-        nice.append(p.upper())
-    self.setText(" + ".join(nice))
+    self.setText(format_hotkey_display(self._value))
 
   def mousePressEvent(self, event):
     super().mousePressEvent(event)
@@ -300,7 +314,6 @@ class SettingsDialog(QDialog):
     self._on_change = on_change
     self.setWindowTitle("ImmediPaste Settings")
     self.setFixedWidth(480)
-    self._position_near_tray()
 
     # Debounce timer for config saves
     self._save_timer = QTimer(self)
@@ -369,6 +382,9 @@ class SettingsDialog(QDialog):
     close_btn.clicked.connect(self.accept)
     btn_layout.addWidget(close_btn)
     layout.addLayout(btn_layout)
+
+    # Position after layout is built so self.height() reflects actual content
+    self._position_near_tray()
 
     # Auto-save on any change
     self.folder_edit.editingFinished.connect(self._emit_change)
@@ -511,18 +527,22 @@ class ImmediPaste:
       return
     self.capturing = True
 
-    overlay = CaptureOverlay(
+    self._overlay = CaptureOverlay(
       save_folder=self.config["save_folder"],
       fmt=self.config.get("format", "jpg"),
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "immedipaste"),
       on_done=self._on_capture_done,
     )
-    overlay.capture_fullscreen_direct()
+    self._overlay.capture_fullscreen_direct()
 
   def _on_capture_done(self, filepath: str | None, error: str | None = None) -> None:
     self.capturing = False
     self._overlay = None
+
+    # User cancelled -- reset state silently, no notification
+    if error == "cancelled":
+      return
 
     if error:
       log.error("Capture error: %s", error)
@@ -570,7 +590,8 @@ class ImmediPaste:
     old_config = dict(self.config)
     self.config.update(new_config)
     save_config(self.config)
-    set_launch_on_startup(self.config.get("launch_on_startup", False))
+    if new_config.get("launch_on_startup") != old_config.get("launch_on_startup"):
+      set_launch_on_startup(self.config.get("launch_on_startup", False))
     log.debug("Settings updated: %s",
       {k: v for k, v in new_config.items() if old_config.get(k) != v})
 
@@ -602,34 +623,25 @@ class ImmediPaste:
     window_str = self.config.get("hotkey_window", "<ctrl>+<alt>+<shift>+d")
     fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+f")
 
-    try:
-      hotkey_region = keyboard.HotKey(
-        keyboard.HotKey.parse(region_str),
-        self.hotkey_bridge.region_triggered.emit,
-      )
-      hotkey_window = keyboard.HotKey(
-        keyboard.HotKey.parse(window_str),
-        self.hotkey_bridge.window_triggered.emit,
-      )
-      hotkey_fullscreen = keyboard.HotKey(
-        keyboard.HotKey.parse(fullscreen_str),
-        self.hotkey_bridge.fullscreen_triggered.emit,
-      )
-    except ValueError as e:
-      log.error("Invalid hotkey configuration: %s", e)
-      # Fall back to defaults
-      hotkey_region = keyboard.HotKey(
-        keyboard.HotKey.parse("<ctrl>+<alt>+<shift>+s"),
-        self.hotkey_bridge.region_triggered.emit,
-      )
-      hotkey_window = keyboard.HotKey(
-        keyboard.HotKey.parse("<ctrl>+<alt>+<shift>+d"),
-        self.hotkey_bridge.window_triggered.emit,
-      )
-      hotkey_fullscreen = keyboard.HotKey(
-        keyboard.HotKey.parse("<ctrl>+<alt>+<shift>+f"),
-        self.hotkey_bridge.fullscreen_triggered.emit,
-      )
+    def _parse_hotkey(hotkey_str, default_str, signal):
+      try:
+        return keyboard.HotKey(keyboard.HotKey.parse(hotkey_str), signal)
+      except ValueError as e:
+        log.error("Invalid hotkey '%s': %s -- using default '%s'", hotkey_str, e, default_str)
+        return keyboard.HotKey(keyboard.HotKey.parse(default_str), signal)
+
+    hotkey_region = _parse_hotkey(
+      region_str, "<ctrl>+<alt>+<shift>+s",
+      self.hotkey_bridge.region_triggered.emit,
+    )
+    hotkey_window = _parse_hotkey(
+      window_str, "<ctrl>+<alt>+<shift>+d",
+      self.hotkey_bridge.window_triggered.emit,
+    )
+    hotkey_fullscreen = _parse_hotkey(
+      fullscreen_str, "<ctrl>+<alt>+<shift>+f",
+      self.hotkey_bridge.fullscreen_triggered.emit,
+    )
 
     def on_press(k):
       key = self._listener.canonical(k)
@@ -661,13 +673,17 @@ class ImmediPaste:
   def _rebuild_tray_menu(self) -> None:
     self.tray_menu.clear()
 
-    region_action = self.tray_menu.addAction("Capture Region  (Ctrl+Alt+Shift+S)")
+    region_hk = format_hotkey_display(self.config.get("hotkey_region", ""))
+    window_hk = format_hotkey_display(self.config.get("hotkey_window", ""))
+    fullscreen_hk = format_hotkey_display(self.config.get("hotkey_fullscreen", ""))
+
+    region_action = self.tray_menu.addAction("Capture Region  (%s)" % region_hk)
     region_action.triggered.connect(self.trigger_capture)
 
-    window_action = self.tray_menu.addAction("Capture Window  (Ctrl+Alt+Shift+D)")
+    window_action = self.tray_menu.addAction("Capture Window  (%s)" % window_hk)
     window_action.triggered.connect(self.trigger_window_capture)
 
-    fullscreen_action = self.tray_menu.addAction("Capture Fullscreen  (Ctrl+Alt+Shift+F)")
+    fullscreen_action = self.tray_menu.addAction("Capture Fullscreen  (%s)" % fullscreen_hk)
     fullscreen_action.triggered.connect(self.trigger_fullscreen)
 
     if self.capture_history:
@@ -750,16 +766,34 @@ def acquire_single_instance() -> IO[str]:
     fh.write(str(time.time()))
     fh.flush()
 
-  lock_file = open(lock_path, "w")
+  # Read existing timestamp and open without truncation to preserve it
+  # for other instances. Use "r+" (no truncation) for existing files,
+  # "w" only when creating a new lock file.
+  saved_timestamp = None
+  if os.path.exists(lock_path):
+    try:
+      lock_file = open(lock_path, "r+")
+      content = lock_file.read().strip()
+      if content:
+        saved_timestamp = float(content)
+      lock_file.seek(0)
+    except (OSError, ValueError):
+      # File unreadable or bad content -- create fresh
+      try:
+        lock_file.close()
+      except Exception:
+        pass
+      lock_file = open(lock_path, "w")
+  else:
+    lock_file = open(lock_path, "w")
+
   try:
     _try_lock(lock_file)
   except OSError:
     # Lock is held -- check if it's stale
     import time
-    try:
-      with open(lock_path, "r") as f:
-        timestamp = float(f.read().strip())
-      age = time.time() - timestamp
+    if saved_timestamp is not None:
+      age = time.time() - saved_timestamp
       if age > LOCK_TIMEOUT_SECONDS:
         log.warning("Stale lock file (%.0fs old), breaking lock", age)
         lock_file.close()
@@ -776,8 +810,8 @@ def acquire_single_instance() -> IO[str]:
       else:
         log.info("Another instance is already running, exiting")
         sys.exit(0)
-    except (ValueError, OSError):
-      # Can't read timestamp -- assume active
+    else:
+      # No readable timestamp -- assume active
       log.info("Another instance is already running, exiting")
       sys.exit(0)
 

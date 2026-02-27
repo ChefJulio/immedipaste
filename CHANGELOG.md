@@ -6,6 +6,23 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v2 (current)
 
+- `-------` Fix lock truncation, cancel notification, hotkey parse, tray labels, error messages
+  - Lock file opened with "r+" (no truncation) to preserve timestamp for other instances
+  - Cancel no longer shows false "Copied to clipboard" notification (uses "cancelled" sentinel)
+  - Each hotkey parsed independently -- one bad hotkey no longer resets all three to defaults
+  - Tray menu labels now reflect user-configured hotkeys (format_hotkey_display helper)
+  - Error message for clipboard-only mode no longer references disk save
+  - Capture filename includes milliseconds to prevent same-second overwrites
+  - Clipboard-only test now mocks clipboard and checks exact success message + icon type
+- `-------` Fix stale lock detection, registry handle leak, dialog positioning, logger propagation
+  - Stale lock detection: read timestamp before opening with "w" (which truncates the file)
+  - Registry handle leak: use try/finally for winreg.CloseKey, log warning in dev mode
+  - Settings dialog positioned after layout is built (correct height calculation)
+  - trigger_fullscreen stores overlay in self._overlay (consistent with region/window)
+  - set_launch_on_startup only called when the setting actually changes
+  - Logger propagate=False prevents duplicate output when root logger is configured
+  - Lock tests rewritten with mocked locking to exercise stale detection code paths
+  - Added 2 new tests: no-timestamp fallback, stale break failure (66 total)
 - `bfa9d67` Code quality improvements: type hints, lock timeout, debounce, folder validation
   - Added type hints (`from __future__ import annotations`) to all source modules
   - Lock file now stores timestamp; stale locks (>1h) auto-broken on startup

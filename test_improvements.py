@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import time
 from unittest.mock import patch, MagicMock, PropertyMock
 
@@ -20,6 +21,27 @@ from main import (
 
 # -- Lock file timeout -------------------------------------------------------
 
+def _mock_lock_func(monkeypatch, side_effects):
+  """Mock the platform locking function with a sequence of side effects.
+
+  Each element in side_effects is either None (lock succeeds) or an exception
+  instance (lock fails). Calls beyond the list always succeed.
+  """
+  calls = [0]
+  def mock_fn(*args, **kwargs):
+    idx = calls[0]
+    calls[0] += 1
+    if idx < len(side_effects) and side_effects[idx] is not None:
+      raise side_effects[idx]
+  if sys.platform == "win32":
+    import msvcrt as _msvcrt
+    monkeypatch.setattr(_msvcrt, "locking", mock_fn)
+  else:
+    import fcntl as _fcntl
+    monkeypatch.setattr(_fcntl, "flock", mock_fn)
+  return calls
+
+
 class TestLockFileTimeout:
   def _patch_tempdir(self, monkeypatch, tmp_path):
     import tempfile as _tempfile
@@ -29,46 +51,71 @@ class TestLockFileTimeout:
     self._patch_tempdir(monkeypatch, tmp_path)
     lock_path = str(tmp_path / "immedipaste.lock")
 
-    # Capture what _write_timestamp writes
-    written = []
-    original_write = open.__class__
-
     lock = acquire_single_instance()
     try:
-      # Verify lock file exists and has content
       assert os.path.exists(lock_path)
-      # On Windows, we can't read a locked file from another handle,
-      # so verify the lock file size is non-zero (timestamp was written)
       assert os.path.getsize(lock_path) > 0
     finally:
       lock.close()
 
   def test_stale_lock_is_broken(self, tmp_path, monkeypatch):
+    """Lock is held but timestamp is stale -- should break and reacquire."""
     self._patch_tempdir(monkeypatch, tmp_path)
     lock_path = str(tmp_path / "immedipaste.lock")
 
-    # Write a very old timestamp
+    # Write a very old timestamp (simulates a hung process)
     with open(lock_path, "w") as f:
       f.write(str(time.time() - LOCK_TIMEOUT_SECONDS - 100))
 
-    # Should succeed (stale lock broken)
+    # Mock locking: first call fails (lock held), second call succeeds (reacquired)
+    calls = _mock_lock_func(monkeypatch, [OSError("mock: lock held"), None])
+
     lock = acquire_single_instance()
     try:
       assert lock is not None
+      assert calls[0] == 2  # Two lock attempts: fail then succeed
     finally:
       lock.close()
 
   def test_fresh_lock_blocks(self, tmp_path, monkeypatch):
+    """Lock is held with a fresh timestamp -- should exit."""
     self._patch_tempdir(monkeypatch, tmp_path)
+    lock_path = str(tmp_path / "immedipaste.lock")
 
-    # Acquire first lock
-    lock1 = acquire_single_instance()
-    try:
-      # Second acquire should exit
-      with pytest.raises(SystemExit):
-        acquire_single_instance()
-    finally:
-      lock1.close()
+    # Write a recent timestamp
+    with open(lock_path, "w") as f:
+      f.write(str(time.time()))
+
+    # Mock locking: always fails (active instance)
+    _mock_lock_func(monkeypatch, [OSError("mock: lock held")])
+
+    with pytest.raises(SystemExit):
+      acquire_single_instance()
+
+  def test_no_timestamp_assumes_active(self, tmp_path, monkeypatch):
+    """Lock is held but no readable timestamp -- should assume active and exit."""
+    self._patch_tempdir(monkeypatch, tmp_path)
+    # No pre-existing lock file -- saved_timestamp will be None
+
+    # Mock locking: always fails
+    _mock_lock_func(monkeypatch, [OSError("mock: lock held")])
+
+    with pytest.raises(SystemExit):
+      acquire_single_instance()
+
+  def test_stale_lock_break_fails_still_exits(self, tmp_path, monkeypatch):
+    """Lock is stale but reacquire also fails -- should exit."""
+    self._patch_tempdir(monkeypatch, tmp_path)
+    lock_path = str(tmp_path / "immedipaste.lock")
+
+    with open(lock_path, "w") as f:
+      f.write(str(time.time() - LOCK_TIMEOUT_SECONDS - 100))
+
+    # Mock locking: both attempts fail
+    _mock_lock_func(monkeypatch, [OSError("held"), OSError("still held")])
+
+    with pytest.raises(SystemExit):
+      acquire_single_instance()
 
 
 # -- Config save debounce ----------------------------------------------------

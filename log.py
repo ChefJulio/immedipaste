@@ -80,6 +80,7 @@ def get_logger(name: str) -> logging.Logger:
   logger = logging.getLogger(f"immedipaste.{name}")
   if not logger.handlers:
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False
     if _file_handler:
       logger.addHandler(_file_handler)
     logger.addHandler(_console_handler)

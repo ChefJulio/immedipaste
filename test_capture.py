@@ -137,7 +137,7 @@ class TestFinishCapture:
     assert results["error"] is not None
     assert "clipboard" in results["error"].lower()
 
-  def test_cancel_calls_done_with_none(self):
+  def test_cancel_calls_done_with_cancelled(self):
     from capture import CaptureOverlay
     results = {}
 
@@ -151,4 +151,4 @@ class TestFinishCapture:
       overlay._cancel()
 
     assert results["filepath"] is None
-    assert results["error"] is None
+    assert results["error"] == "cancelled"

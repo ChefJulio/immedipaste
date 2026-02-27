@@ -61,7 +61,8 @@ class TestCapturePipeline:
     ip = self._make_app(tmp_path, monkeypatch)
     ip.config["save_to_disk"] = False
 
-    with patch("capture.mss.mss") as mock_mss:
+    with patch("capture.mss.mss") as mock_mss, \
+         patch("capture.copy_image_to_clipboard", return_value=True):
       ctx = MagicMock()
       ctx.monitors = [{"left": 0, "top": 0, "width": 100, "height": 100}]
       grab_result = MagicMock()
@@ -77,9 +78,11 @@ class TestCapturePipeline:
     assert ip.capturing is False
     assert len(ip.capture_history) == 0  # No file saved
     ip.tray_icon.showMessage.assert_called_once()
-    # Message should indicate clipboard-only
-    msg = ip.tray_icon.showMessage.call_args[0][1]
-    assert "clipboard" in msg.lower()
+    # Verify success notification (Information icon, "Copied to clipboard")
+    call_args = ip.tray_icon.showMessage.call_args[0]
+    assert call_args[1] == "Copied to clipboard"
+    from PySide6.QtWidgets import QSystemTrayIcon
+    assert call_args[2] == QSystemTrayIcon.MessageIcon.Information
 
   def test_screenshot_failure_shows_error(self, tmp_path, monkeypatch):
     ip = self._make_app(tmp_path, monkeypatch)

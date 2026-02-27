@@ -20,7 +20,7 @@ log.py              # Centralized logging with rotating file handler + fallback 
 platform_utils.py   # Cross-platform clipboard and default folder detection
 window_utils.py     # Windows-only window detection via Win32 ctypes/DWM APIs
 config.json         # User settings (gitignored, auto-created from DEFAULT_CONFIG on first run)
-test_*.py           # pytest test suite (64 tests)
+test_*.py           # pytest test suite (66 tests)
 ImmediPaste.spec    # PyInstaller build config (excluded Qt modules, UPX, no console)
 requirements.txt    # 3 deps: mss, pynput, PySide6
 ```
@@ -134,22 +134,23 @@ Drawn programmatically with `QPainter` on a `QPixmap` (camera icon). No image as
 
 ### Errors Logged Only (silent to user)
 - Config save failures -- settings appear to work but may not persist
-- Hotkey parse failures -- falls back to defaults with no notification
+- Hotkey parse failures -- each hotkey falls back to its own default independently, logged with the bad value
 - Startup registry update failures
 - File explorer open failures
 - Save folder creation failure at app start (only fails visibly during capture)
 
 ### Error Precedence in _finish_capture()
-1. Neither clipboard nor save succeeded: "Capture failed: could not copy to clipboard or save to disk"
+1. Neither clipboard nor save succeeded: "Capture failed: could not copy to clipboard or save to disk" (or just "...to clipboard" when `save_to_disk=False`)
 2. Save succeeded but clipboard failed: "Copied to disk but clipboard copy failed"
 3. Both succeeded: `error=None`
+4. User cancelled: `error="cancelled"` -- `_on_capture_done` resets state silently, no notification
 
 **Note:** Clipboard errors don't prevent save. Save always attempted if `save_to_disk=True`.
 
 ## Platform Notes
 
 - **Window capture** (`window_utils.py`) is Windows-only. On other platforms, `trigger_window_capture()` shows a warning notification and returns early.
-- **Launch on startup** uses Windows Registry (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). No-op on other platforms.
+- **Launch on startup** uses Windows Registry (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). No-op on other platforms. Silently ignored when running from source (not frozen exe) -- logs a debug message.
 - **Log file location** tries: app dir -> `%APPDATA%/ImmediPaste` (Win) or `~/.local/state/immedipaste` (Unix) -> temp dir.
 - **Font in capture overlay** uses `QFontDatabase.systemFont(FixedFont)` -- no hardcoded font names.
 - **Default save folder:** Windows: `~/OneDrive/Pictures/Screenshots` (if exists), else `~/Pictures/Screenshots`. macOS: `~/Desktop`. Linux: `~/Pictures/Screenshots`.
@@ -177,7 +178,7 @@ python -m pytest test_capture.py -k save  # Filter by name
 
 Tests mock `mss` (no display needed), clipboard operations, and file I/O. QApplication is created once per test module.
 
-### What's Tested (64 tests)
+### What's Tested (66 tests)
 | Module | Tests | Covers |
 |--------|-------|--------|
 | test_capture.py | 10 | Save formats (jpg/png/webp), custom prefix, folder creation, invalid paths, callback flow, cancel |
@@ -186,7 +187,7 @@ Tests mock `mss` (no display needed), clipboard operations, and file I/O. QAppli
 | test_log.py | 7 | Logger creation, handlers, naming, deduplication, log dir resolution |
 | test_platform_utils.py | 4 | Clipboard success/failure, default folder platform checks |
 | test_integration.py | 10 | Full capture pipeline, clipboard-only mode, double-trigger blocking, history limit, config migration |
-| test_improvements.py | 18 | Lock file timeout/stale detection, config save debounce, dialog close flush, folder validation (incl. relative paths), listener error handling, tray icon constants |
+| test_improvements.py | 20 | Lock file stale detection (mocked locking), stale break failure, no-timestamp fallback, config save debounce, dialog close flush, folder validation (incl. relative paths), listener error handling, tray icon constants |
 
 ### What's NOT Tested
 - pynput.Listener threading behavior
@@ -216,7 +217,7 @@ The spec file excludes unused Qt modules (QtNetwork, QtQml, QtQuick, QtSvg, and 
 
 1. **Settings dialog stops hotkey listener.** `open_settings()` calls `_listener.stop()`, dialog is modal, listener restarts on close. Intentional -- prevents hotkeys firing while editing them. But if debugging "hotkeys stopped working," check if settings dialog is open.
 
-2. **Hotkey parse failures are silent.** Invalid hotkey string in config.json -> `log.error()` + fall back to defaults. User never notified. If a user manually edits config.json with a bad hotkey, the app silently ignores it.
+2. **Hotkey parse failures are silent but isolated.** Invalid hotkey string in config.json -> `log.error()` + fall back to that hotkey's default. Only the broken hotkey is affected; valid hotkeys keep their custom values. User never notified via UI.
 
 3. **Save folder validated at settings time.** SettingsDialog validates the save folder path on every change: shows a warning label if the folder doesn't exist and can't be created, or if it exists but isn't writable. Final validation still happens during capture in `_save()`.
 

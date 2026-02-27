@@ -218,7 +218,10 @@ class CaptureOverlay(QWidget):
     self.close()
 
     if not clipboard_ok and not filepath:
-      error = "Capture failed: could not copy to clipboard or save to disk"
+      if self.save_to_disk:
+        error = "Capture failed: could not copy to clipboard or save to disk"
+      else:
+        error = "Capture failed: could not copy to clipboard"
     elif not clipboard_ok:
       error = "Copied to disk but clipboard copy failed"
     else:
@@ -239,7 +242,7 @@ class CaptureOverlay(QWidget):
       log.error("Cannot create save folder '%s': %s", self.save_folder, e)
       return None
 
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")[:-3]  # milliseconds
     ext = self.fmt
     filepath = os.path.join(folder, f"{self.filename_prefix}_{timestamp}.{ext}")
 
@@ -260,7 +263,7 @@ class CaptureOverlay(QWidget):
   def _cancel(self) -> None:
     self.close()
     if self.on_done:
-      self.on_done(None, error=None)
+      self.on_done(None, error="cancelled")
 
   # -- Standalone (no overlay) ------------------------------------------
 
@@ -278,7 +281,10 @@ class CaptureOverlay(QWidget):
     filepath = self._save(self.screenshot_qimage) if self.save_to_disk else None
 
     if not clipboard_ok and not filepath:
-      error = "Capture failed: could not copy to clipboard or save to disk"
+      if self.save_to_disk:
+        error = "Capture failed: could not copy to clipboard or save to disk"
+      else:
+        error = "Capture failed: could not copy to clipboard"
     elif not clipboard_ok:
       error = "Copied to disk but clipboard copy failed"
     else:
