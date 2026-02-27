@@ -6,7 +6,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v2 (current)
 
-- `-------` Fix lock truncation, cancel notification, hotkey parse, tray labels, error messages
+- `0df6889` Fix lock truncation, cancel notification, hotkey parse, tray labels, error messages
   - Lock file opened with "r+" (no truncation) to preserve timestamp for other instances
   - Cancel no longer shows false "Copied to clipboard" notification (uses "cancelled" sentinel)
   - Each hotkey parsed independently -- one bad hotkey no longer resets all three to defaults
@@ -14,7 +14,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
   - Error message for clipboard-only mode no longer references disk save
   - Capture filename includes milliseconds to prevent same-second overwrites
   - Clipboard-only test now mocks clipboard and checks exact success message + icon type
-- `-------` Fix stale lock detection, registry handle leak, dialog positioning, logger propagation
+- `0df6889` Fix stale lock detection, registry handle leak, dialog positioning, logger propagation
   - Stale lock detection: read timestamp before opening with "w" (which truncates the file)
   - Registry handle leak: use try/finally for winreg.CloseKey, log warning in dev mode
   - Settings dialog positioned after layout is built (correct height calculation)
