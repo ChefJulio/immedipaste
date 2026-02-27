@@ -1,14 +1,17 @@
+import functools
 import json
 import os
 import platform
 import subprocess
 import sys
-import threading
-import tkinter as tk
-from tkinter import filedialog
 
-import pystray
-from PIL import Image, ImageDraw
+from PySide6.QtCore import Qt, QObject, Signal
+from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtWidgets import (
+  QApplication, QSystemTrayIcon, QMenu, QDialog, QFormLayout,
+  QLineEdit, QComboBox, QCheckBox, QPushButton, QHBoxLayout,
+  QVBoxLayout, QLabel, QFileDialog,
+)
 from pynput import keyboard
 
 from capture import CaptureOverlay
@@ -48,19 +51,133 @@ def save_config(config):
     f.write("\n")
 
 
-def create_tray_icon_image():
-  """Generate a simple camera-style tray icon."""
+def create_tray_icon():
+  """Generate a simple camera-style tray icon using QPainter."""
   size = 64
-  img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-  draw = ImageDraw.Draw(img)
+  pixmap = QPixmap(size, size)
+  pixmap.fill(QColor(0, 0, 0, 0))
+
+  painter = QPainter(pixmap)
+  painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+  painter.setPen(Qt.PenStyle.NoPen)
+
   # Camera body
-  draw.rounded_rectangle([4, 16, 60, 56], radius=8, fill="#2196F3")
-  # Lens
-  draw.ellipse([22, 24, 42, 48], fill="white")
-  draw.ellipse([27, 29, 37, 43], fill="#1565C0")
+  painter.setBrush(QColor("#2196F3"))
+  painter.drawRoundedRect(4, 16, 56, 40, 8, 8)
+
+  # Lens outer
+  painter.setBrush(QColor("white"))
+  painter.drawEllipse(22, 24, 20, 24)
+
+  # Lens inner
+  painter.setBrush(QColor("#1565C0"))
+  painter.drawEllipse(27, 29, 10, 14)
+
   # Flash bump
-  draw.rectangle([24, 10, 40, 18], fill="#2196F3")
-  return img
+  painter.setBrush(QColor("#2196F3"))
+  painter.drawRect(24, 10, 16, 8)
+
+  painter.end()
+  return QIcon(pixmap)
+
+
+class HotkeyBridge(QObject):
+  """Bridge pynput hotkey events to Qt's main thread via signals."""
+  region_triggered = Signal()
+  fullscreen_triggered = Signal()
+
+
+class SettingsDialog(QDialog):
+  def __init__(self, config, parent=None):
+    super().__init__(parent)
+    self.setWindowTitle("ImmediPaste Settings")
+    self.setFixedSize(480, 380)
+    self._position_near_tray()
+
+    layout = QVBoxLayout(self)
+
+    # Description
+    desc = QLabel("Screenshot tool that captures and copies to clipboard instantly.")
+    desc.setStyleSheet("color: #555555;")
+    desc.setWordWrap(True)
+    layout.addWidget(desc)
+
+    # Form
+    form = QFormLayout()
+
+    # Save folder + browse
+    folder_row = QHBoxLayout()
+    self.folder_edit = QLineEdit(config.get("save_folder", ""))
+    browse_btn = QPushButton("Browse...")
+    browse_btn.clicked.connect(self._browse_folder)
+    folder_row.addWidget(self.folder_edit)
+    folder_row.addWidget(browse_btn)
+    form.addRow("Save folder:", folder_row)
+
+    # Region hotkey
+    self.hotkey_edit = QLineEdit(config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s"))
+    form.addRow("Region hotkey:", self.hotkey_edit)
+
+    # Fullscreen hotkey
+    self.fs_hotkey_edit = QLineEdit(config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+d"))
+    form.addRow("Fullscreen hotkey:", self.fs_hotkey_edit)
+
+    # Hint
+    hint = QLabel("e.g. <ctrl>+<alt>+<shift>+s")
+    hint.setStyleSheet("color: gray;")
+    form.addRow("", hint)
+
+    # Format
+    self.fmt_combo = QComboBox()
+    self.fmt_combo.addItems(["jpg", "png", "webp"])
+    self.fmt_combo.setCurrentText(config.get("format", "jpg"))
+    form.addRow("Save format:", self.fmt_combo)
+
+    # Filename prefix
+    self.prefix_edit = QLineEdit(config.get("filename_prefix", "immedipaste"))
+    form.addRow("Filename prefix:", self.prefix_edit)
+
+    layout.addLayout(form)
+
+    # Save to disk checkbox
+    self.save_disk_check = QCheckBox("Also save screenshots to disk")
+    self.save_disk_check.setChecked(config.get("save_to_disk", True))
+    layout.addWidget(self.save_disk_check)
+
+    # Buttons
+    btn_layout = QHBoxLayout()
+    btn_layout.addStretch()
+    save_btn = QPushButton("Save")
+    save_btn.clicked.connect(self.accept)
+    cancel_btn = QPushButton("Cancel")
+    cancel_btn.clicked.connect(self.reject)
+    btn_layout.addWidget(save_btn)
+    btn_layout.addWidget(cancel_btn)
+    layout.addLayout(btn_layout)
+
+  def _position_near_tray(self):
+    screen = QApplication.primaryScreen().geometry()
+    x = screen.width() - self.width() - 16
+    y = screen.height() - self.height() - 60
+    self.move(x, y)
+
+  def _browse_folder(self):
+    path = QFileDialog.getExistingDirectory(
+      self, "Select Save Folder",
+      os.path.expanduser(self.folder_edit.text()),
+    )
+    if path:
+      self.folder_edit.setText(path)
+
+  def get_config(self):
+    return {
+      "save_folder": self.folder_edit.text(),
+      "hotkey_region": self.hotkey_edit.text(),
+      "hotkey_fullscreen": self.fs_hotkey_edit.text(),
+      "format": self.fmt_combo.currentText(),
+      "filename_prefix": self.prefix_edit.text(),
+      "save_to_disk": self.save_disk_check.isChecked(),
+    }
 
 
 class ImmediPaste:
@@ -69,31 +186,28 @@ class ImmediPaste:
     self.capturing = False
     self.tray_icon = None
     self.capture_history = []
+    self._overlay = None
+    self._last_capture_path = None
+
     # Ensure save folder exists
     folder = os.path.expanduser(self.config.get("save_folder", ""))
     if folder:
       os.makedirs(folder, exist_ok=True)
 
   def trigger_capture(self):
-    """Launch region selection overlay in a new thread."""
+    """Open the region selection overlay."""
     if self.capturing:
       return
     self.capturing = True
 
-    def run():
-      try:
-        overlay = CaptureOverlay(
-          save_folder=self.config["save_folder"],
-          fmt=self.config.get("format", "jpg"),
-          save_to_disk=self.config.get("save_to_disk", True),
-          filename_prefix=self.config.get("filename_prefix", "immedipaste"),
-          on_done=self._on_capture_done,
-        )
-        overlay.start()
-      finally:
-        self.capturing = False
-
-    threading.Thread(target=run, daemon=True).start()
+    self._overlay = CaptureOverlay(
+      save_folder=self.config["save_folder"],
+      fmt=self.config.get("format", "jpg"),
+      save_to_disk=self.config.get("save_to_disk", True),
+      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      on_done=self._on_capture_done,
+    )
+    self._overlay.start()
 
   def trigger_fullscreen(self):
     """Capture full screen immediately, no overlay."""
@@ -101,36 +215,39 @@ class ImmediPaste:
       return
     self.capturing = True
 
-    def run():
-      try:
-        cap = CaptureOverlay(
-          save_folder=self.config["save_folder"],
-          fmt=self.config.get("format", "jpg"),
-          save_to_disk=self.config.get("save_to_disk", True),
-          filename_prefix=self.config.get("filename_prefix", "immedipaste"),
-          on_done=self._on_capture_done,
-        )
-        cap.capture_fullscreen_direct()
-      finally:
-        self.capturing = False
-
-    threading.Thread(target=run, daemon=True).start()
+    overlay = CaptureOverlay(
+      save_folder=self.config["save_folder"],
+      fmt=self.config.get("format", "jpg"),
+      save_to_disk=self.config.get("save_to_disk", True),
+      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      on_done=self._on_capture_done,
+    )
+    overlay.capture_fullscreen_direct()
 
   def _on_capture_done(self, filepath):
+    self.capturing = False
+    self._overlay = None
+
     if filepath:
       self.capture_history.append(filepath)
       if len(self.capture_history) > MAX_HISTORY:
         self.capture_history = self.capture_history[-MAX_HISTORY:]
-      self._rebuild_tray_menu()
+      self._last_capture_path = filepath
+
     if self.tray_icon:
-      if filepath:
-        self.tray_icon.notify(f"Saved: {os.path.basename(filepath)}", "ImmediPaste")
-      else:
-        self.tray_icon.notify("Copied to clipboard", "ImmediPaste")
+      msg = os.path.basename(filepath) if filepath else "Copied to clipboard"
+      self.tray_icon.showMessage(
+        "ImmediPaste", msg,
+        QSystemTrayIcon.MessageIcon.Information, 3000,
+      )
+
+  def _on_notification_clicked(self):
+    """Open the most recent capture in file explorer."""
+    if self._last_capture_path and os.path.exists(self._last_capture_path):
+      self._show_in_explorer(self._last_capture_path)
 
   @staticmethod
   def _show_in_explorer(filepath):
-    """Open the file's parent folder and select the file."""
     system = platform.system()
     if system == "Windows":
       subprocess.Popen(["explorer", "/select,", os.path.normpath(filepath)])
@@ -140,111 +257,30 @@ class ImmediPaste:
       subprocess.Popen(["xdg-open", os.path.dirname(filepath)])
 
   def open_settings(self):
-    """Open a settings dialog in a new thread."""
-    def run_dialog():
-      root = tk.Tk()
-      root.title("ImmediPaste Settings")
-      root.resizable(False, False)
-      root.attributes("-topmost", True)
-
-      # Position near the system tray (bottom-right)
-      root.update_idletasks()
-      screen_w = root.winfo_screenwidth()
-      screen_h = root.winfo_screenheight()
-      win_w = 480
-      win_h = 360
-      x = screen_w - win_w - 16
-      y = screen_h - win_h - 60
-      root.geometry(f"{win_w}x{win_h}+{x}+{y}")
-
-      # Description
-      desc = tk.Label(
-        root,
-        text="Screenshot tool that captures and copies to clipboard instantly.",
-        fg="#555555", wraplength=380, justify="left",
-      )
-      desc.grid(row=0, column=0, columnspan=3, sticky="w", padx=8, pady=(10, 6))
-
-      # Save folder
-      tk.Label(root, text="Save folder:").grid(row=1, column=0, sticky="w", padx=8, pady=(4, 4))
-      folder_var = tk.StringVar(value=self.config.get("save_folder", ""))
-      folder_entry = tk.Entry(root, textvariable=folder_var, width=40)
-      folder_entry.grid(row=1, column=1, padx=4, pady=(4, 4))
-
-      def browse_folder():
-        initial = os.path.expanduser(folder_var.get())
-        path = filedialog.askdirectory(initialdir=initial, parent=root)
-        if path:
-          folder_var.set(path)
-
-      tk.Button(root, text="Browse...", command=browse_folder).grid(row=1, column=2, padx=(0, 8), pady=(4, 4))
-
-      # Region hotkey
-      tk.Label(root, text="Region hotkey:").grid(row=2, column=0, sticky="w", padx=8, pady=4)
-      hotkey_var = tk.StringVar(value=self.config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s"))
-      tk.Entry(root, textvariable=hotkey_var, width=40).grid(row=2, column=1, padx=4, pady=4)
-
-      # Fullscreen hotkey
-      tk.Label(root, text="Fullscreen hotkey:").grid(row=3, column=0, sticky="w", padx=8, pady=4)
-      fs_hotkey_var = tk.StringVar(value=self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+d"))
-      tk.Entry(root, textvariable=fs_hotkey_var, width=40).grid(row=3, column=1, padx=4, pady=4)
-
-      tk.Label(root, text="e.g. <ctrl>+<alt>+<shift>+s", fg="gray").grid(row=4, column=1, sticky="w", padx=4)
-
-      # Image format
-      tk.Label(root, text="Save format:").grid(row=5, column=0, sticky="w", padx=8, pady=4)
-      fmt_var = tk.StringVar(value=self.config.get("format", "jpg"))
-      fmt_menu = tk.OptionMenu(root, fmt_var, "jpg", "png", "webp")
-      fmt_menu.config(width=8)
-      fmt_menu.grid(row=5, column=1, sticky="w", padx=4, pady=4)
-
-      # Filename prefix
-      tk.Label(root, text="Filename prefix:").grid(row=6, column=0, sticky="w", padx=8, pady=4)
-      prefix_var = tk.StringVar(value=self.config.get("filename_prefix", "immedipaste"))
-      tk.Entry(root, textvariable=prefix_var, width=40).grid(row=6, column=1, padx=4, pady=4)
-
-      # Save to disk toggle
-      save_disk_var = tk.BooleanVar(value=self.config.get("save_to_disk", True))
-      tk.Checkbutton(root, text="Also save screenshots to disk", variable=save_disk_var).grid(
-        row=7, column=0, columnspan=2, sticky="w", padx=8, pady=4,
-      )
-
-      # Buttons
-      btn_frame = tk.Frame(root)
-      btn_frame.grid(row=8, column=0, columnspan=3, pady=12)
-
-      def on_save():
-        self.config["save_folder"] = folder_var.get()
-        self.config["hotkey_region"] = hotkey_var.get()
-        self.config["hotkey_fullscreen"] = fs_hotkey_var.get()
-        self.config["format"] = fmt_var.get()
-        self.config["filename_prefix"] = prefix_var.get()
-        self.config["save_to_disk"] = save_disk_var.get()
-        save_config(self.config)
-        root.destroy()
-        self.reload_settings()
-        if self.tray_icon:
-          self.tray_icon.notify("Settings saved.", "ImmediPaste")
-
-      tk.Button(btn_frame, text="Save", width=10, command=on_save).pack(side="left", padx=8)
-      tk.Button(btn_frame, text="Cancel", width=10, command=root.destroy).pack(side="left", padx=8)
-
-      root.mainloop()
-
-    threading.Thread(target=run_dialog, daemon=True).start()
+    dialog = SettingsDialog(self.config)
+    dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+      new_config = dialog.get_config()
+      self.config.update(new_config)
+      save_config(self.config)
+      self.reload_settings()
+      if self.tray_icon:
+        self.tray_icon.showMessage(
+          "ImmediPaste", "Settings saved.",
+          QSystemTrayIcon.MessageIcon.Information, 2000,
+        )
 
   def _start_hotkey_listener(self):
-    """Create and start a keyboard listener for the current hotkey config."""
     region_str = self.config.get("hotkey_region", "<ctrl>+<alt>+<shift>+s")
     fullscreen_str = self.config.get("hotkey_fullscreen", "<ctrl>+<alt>+<shift>+d")
 
     hotkey_region = keyboard.HotKey(
       keyboard.HotKey.parse(region_str),
-      self.trigger_capture,
+      self.hotkey_bridge.region_triggered.emit,
     )
     hotkey_fullscreen = keyboard.HotKey(
       keyboard.HotKey.parse(fullscreen_str),
-      self.trigger_fullscreen,
+      self.hotkey_bridge.fullscreen_triggered.emit,
     )
 
     def on_press(k):
@@ -261,66 +297,67 @@ class ImmediPaste:
     self._listener.start()
 
   def reload_settings(self):
-    """Reload hotkeys and settings without restarting."""
     self._listener.stop()
     self._start_hotkey_listener()
 
-  def _build_tray_menu(self):
-    """Build the tray menu, including recent captures if any."""
-    items = [
-      pystray.MenuItem(
-        "Capture Region  (Ctrl+Alt+Shift+S)",
-        lambda: self.trigger_capture(),
-      ),
-      pystray.MenuItem(
-        "Capture Fullscreen  (Ctrl+Alt+Shift+D)",
-        lambda: self.trigger_fullscreen(),
-      ),
-    ]
+  def _rebuild_tray_menu(self):
+    self.tray_menu.clear()
+
+    region_action = self.tray_menu.addAction("Capture Region  (Ctrl+Alt+Shift+S)")
+    region_action.triggered.connect(self.trigger_capture)
+
+    fullscreen_action = self.tray_menu.addAction("Capture Fullscreen  (Ctrl+Alt+Shift+D)")
+    fullscreen_action.triggered.connect(self.trigger_fullscreen)
 
     if self.capture_history:
-      items.append(pystray.Menu.SEPARATOR)
-      # Most recent first
+      self.tray_menu.addSeparator()
       for path in reversed(self.capture_history):
         name = os.path.basename(path)
-        # Capture path in closure
-        items.append(pystray.MenuItem(
-          name, lambda _, p=path: self._show_in_explorer(p),
-        ))
+        action = self.tray_menu.addAction(name)
+        action.triggered.connect(functools.partial(self._show_in_explorer, path))
 
-    items.append(pystray.Menu.SEPARATOR)
-    items.append(pystray.MenuItem("Settings", lambda: self.open_settings()))
-    items.append(pystray.MenuItem("Exit", lambda icon, item: icon.stop()))
-    return pystray.Menu(*items)
+    self.tray_menu.addSeparator()
+    settings_action = self.tray_menu.addAction("Settings")
+    settings_action.triggered.connect(self.open_settings)
 
-  def _rebuild_tray_menu(self):
-    """Update the tray menu after a new capture."""
-    if self.tray_icon:
-      self.tray_icon.menu = self._build_tray_menu()
-      self.tray_icon.update_menu()
+    exit_action = self.tray_menu.addAction("Exit")
+    exit_action.triggered.connect(self.app.quit)
 
   def run(self):
+    self.app = QApplication(sys.argv)
+    self.app.setQuitOnLastWindowClosed(False)
+
+    # Hotkey bridge: pynput thread -> Qt main thread
+    self.hotkey_bridge = HotkeyBridge()
+    self.hotkey_bridge.region_triggered.connect(
+      self.trigger_capture, Qt.ConnectionType.QueuedConnection,
+    )
+    self.hotkey_bridge.fullscreen_triggered.connect(
+      self.trigger_fullscreen, Qt.ConnectionType.QueuedConnection,
+    )
+
     self._start_hotkey_listener()
 
     # System tray
-    self.tray_icon = pystray.Icon(
-      "immedipaste",
-      create_tray_icon_image(),
-      "ImmediPaste",
-      menu=self._build_tray_menu(),
-    )
+    self.tray_icon = QSystemTrayIcon(create_tray_icon(), self.app)
+    self.tray_icon.setToolTip("ImmediPaste")
+
+    self.tray_menu = QMenu()
+    self.tray_menu.aboutToShow.connect(self._rebuild_tray_menu)
+    self.tray_icon.setContextMenu(self.tray_menu)
+
+    self.tray_icon.messageClicked.connect(self._on_notification_clicked)
+    self.tray_icon.show()
 
     print("ImmediPaste running. Region: Ctrl+Alt+Shift+S | Fullscreen: Ctrl+Alt+Shift+D")
-    self.tray_icon.run()
+
+    exit_code = self.app.exec()
     self._listener.stop()
+    sys.exit(exit_code)
 
 
 def acquire_single_instance():
-  """Ensure only one instance of ImmediPaste is running.
-
-  Returns the lock file handle (must stay open for the app's lifetime).
-  Exits with a message if another instance is already running.
-  """
+  """Ensure only one instance of ImmediPaste is running."""
   import tempfile
   lock_path = os.path.join(tempfile.gettempdir(), "immedipaste.lock")
   lock_file = open(lock_path, "w")

@@ -1,210 +1,168 @@
 import os
-import platform
-import tkinter as tk
 from datetime import datetime
 
 import mss
-from PIL import Image, ImageTk
-from pynput import keyboard as kb
+from PySide6.QtCore import Qt, QRect, QPoint
+from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QCursor
+from PySide6.QtWidgets import QWidget
 
-from platform_utils import copy_image_to_clipboard, set_dpi_awareness
-
-set_dpi_awareness()
+from platform_utils import copy_image_to_clipboard
 
 
-class CaptureOverlay:
+class CaptureOverlay(QWidget):
   """Fullscreen overlay for region selection. Also supports full-screen capture."""
 
-  def __init__(self, save_folder, fmt="jpg", save_to_disk=True, filename_prefix="immedipaste", on_done=None):
+  def __init__(self, save_folder, fmt="jpg", save_to_disk=True,
+               filename_prefix="immedipaste", on_done=None):
+    super().__init__()
     self.save_folder = save_folder
     self.fmt = fmt.lower()
     self.save_to_disk = save_to_disk
     self.filename_prefix = filename_prefix
     self.on_done = on_done
-    self.start_x = 0
-    self.start_y = 0
-    self.rect_id = None
-    self.dim_ids = []
-    self.bright_id = None
-    self.screenshot = None
-    self.root = None
+    self.start_pos = QPoint()
+    self.current_pos = QPoint()
+    self.is_selecting = False
+    self.screenshot_qimage = None
+    self.dimmed_pixmap = None
+    self.screenshot_pixmap = None
 
   def start(self):
     """Take a screenshot and show the selection overlay."""
+    self._take_screenshot()
+    self._prepare_dimmed()
+
+    self.setWindowFlags(
+      Qt.WindowType.FramelessWindowHint
+      | Qt.WindowType.WindowStaysOnTopHint
+      | Qt.WindowType.Tool
+    )
+    self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    self.setCursor(QCursor(Qt.CursorShape.CrossCursor))
+    self.setGeometry(
+      self.screen_left, self.screen_top,
+      self.screenshot_qimage.width(), self.screenshot_qimage.height(),
+    )
+    self.show()
+
+  def _take_screenshot(self):
+    """Capture all monitors using mss, store as QImage."""
     with mss.mss() as sct:
       monitor = sct.monitors[0]
       raw = sct.grab(monitor)
-      self.screenshot = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+      self.screenshot_qimage = QImage(
+        bytes(raw.bgra), raw.width, raw.height, QImage.Format.Format_ARGB32,
+      ).copy()
       self.screen_left = monitor["left"]
       self.screen_top = monitor["top"]
 
-    self.width, self.height = self.screenshot.size
+  def _prepare_dimmed(self):
+    """Create a dimmed version of the screenshot for the overlay background."""
+    self.screenshot_pixmap = QPixmap.fromImage(self.screenshot_qimage)
+    self.dimmed_pixmap = self.screenshot_pixmap.copy()
+    painter = QPainter(self.dimmed_pixmap)
+    painter.fillRect(self.dimmed_pixmap.rect(), QColor(0, 0, 0, 120))
+    painter.end()
 
-    # Pre-compute dimmed overlay
-    dimmed = self.screenshot.copy()
-    dark = Image.new("RGBA", dimmed.size, (0, 0, 0, 120))
-    dimmed = Image.alpha_composite(dimmed.convert("RGBA"), dark).convert("RGB")
+  # -- Rendering --------------------------------------------------------
 
-    # Set up tkinter window
-    self.root = tk.Tk()
-    self.root.withdraw()
-    self.root.overrideredirect(True)
-    self.root.attributes("-topmost", True)
-    self.root.configure(cursor="crosshair")
-    self.root.geometry(
-      f"{self.width}x{self.height}+{self.screen_left}+{self.screen_top}"
-    )
+  def paintEvent(self, event):
+    painter = QPainter(self)
+    painter.drawPixmap(0, 0, self.dimmed_pixmap)
 
-    # Canvas with dimmed screenshot as background
-    self.canvas = tk.Canvas(
-      self.root, width=self.width, height=self.height, highlightthickness=0
-    )
-    self.canvas.pack()
+    if self.is_selecting:
+      rect = QRect(self.start_pos, self.current_pos).normalized()
+      if rect.width() > 2 and rect.height() > 2:
+        # Bright (original) image inside the selection
+        painter.drawPixmap(rect, self.screenshot_pixmap, rect)
 
-    self.bg_image = ImageTk.PhotoImage(dimmed)
-    self.canvas.create_image(0, 0, anchor=tk.NW, image=self.bg_image)
+        # Selection border
+        painter.setPen(QPen(QColor("#00aaff"), 2))
+        painter.drawRect(rect)
 
-    # Keep a reference to the bright image for the selection preview
-    self.bright_image_full = self.screenshot.copy()
+        # Dimension label
+        label = f"{rect.width()} x {rect.height()}"
+        font = QFont("Consolas", 11)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#00aaff"))
+        label_y = rect.top() - 8 if rect.top() > 25 else rect.bottom() + 18
+        painter.drawText(rect.left(), label_y, label)
 
-    # Bind mouse events
-    self.canvas.bind("<ButtonPress-1>", self._on_press)
-    self.canvas.bind("<B1-Motion>", self._on_drag)
-    self.canvas.bind("<ButtonRelease-1>", self._on_release)
-    self.root.bind("<Button-3>", lambda e: self._cancel())
+    painter.end()
 
-    if platform.system() == "Windows":
-      # overrideredirect windows don't receive keyboard events on Windows,
-      # so use pynput to catch keys at the OS level
-      def on_key_press(key):
-        if key == kb.Key.esc:
-          self.root.after(0, self._cancel)
-          return False
-        if key in (kb.Key.enter, kb.Key.space):
-          self.root.after(0, self._capture_fullscreen)
-          return False
-      self._kb_listener = kb.Listener(on_press=on_key_press)
-      self._kb_listener.start()
-    else:
-      # macOS/Linux: tkinter keyboard events work normally
-      self.root.bind("<Escape>", lambda e: self._cancel())
-      self.root.bind("<Return>", lambda e: self._capture_fullscreen())
-      self.root.bind("<space>", lambda e: self._capture_fullscreen())
+  # -- Mouse events -----------------------------------------------------
 
-    self.root.deiconify()
-    if platform.system() != "Windows":
-      self.root.focus_force()
-    self.root.mainloop()
-    # Clean up after mainloop exits (quit was called)
-    try:
-      self.root.destroy()
-    except tk.TclError:
-      pass
-
-  def _on_press(self, event):
-    self.start_x = event.x
-    self.start_y = event.y
-
-  def _on_drag(self, event):
-    # Clean up previous selection visuals
-    if self.rect_id:
-      self.canvas.delete(self.rect_id)
-    for dim_id in self.dim_ids:
-      self.canvas.delete(dim_id)
-    self.dim_ids.clear()
-    if self.bright_id:
-      self.canvas.delete(self.bright_id)
-      self.bright_id = None
-
-    x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
-    x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
-
-    if (x2 - x1) < 2 or (y2 - y1) < 2:
-      return
-
-    # Show bright (original) image in the selected region
-    cropped = self.bright_image_full.crop((x1, y1, x2, y2))
-    self._bright_photo = ImageTk.PhotoImage(cropped)
-    self.bright_id = self.canvas.create_image(
-      x1, y1, anchor=tk.NW, image=self._bright_photo
-    )
-
-    # Selection border
-    self.rect_id = self.canvas.create_rectangle(
-      x1, y1, x2, y2, outline="#00aaff", width=2
-    )
-
-    # Dimension label
-    w, h = x2 - x1, y2 - y1
-    label_y = y1 - 20 if y1 > 25 else y2 + 5
-    self.dim_ids.append(
-      self.canvas.create_text(
-        x1, label_y,
-        text=f"{w} x {h}",
-        anchor=tk.NW,
-        fill="#00aaff",
-        font=("Consolas", 11, "bold"),
-      )
-    )
-
-  def _on_release(self, event):
-    x1, y1 = min(self.start_x, event.x), min(self.start_y, event.y)
-    x2, y2 = max(self.start_x, event.x), max(self.start_y, event.y)
-
-    if (x2 - x1) < 3 or (y2 - y1) < 3:
+  def mousePressEvent(self, event):
+    if event.button() == Qt.MouseButton.LeftButton:
+      self.start_pos = event.position().toPoint()
+      self.current_pos = self.start_pos
+      self.is_selecting = True
+    elif event.button() == Qt.MouseButton.RightButton:
       self._cancel()
-      return
 
-    self._stop_kb_listener()
-    self.root.quit()
-    cropped = self.screenshot.crop((x1, y1, x2, y2))
-    self._copy_to_clipboard(cropped)
-    filepath = self._save(cropped) if self.save_to_disk else None
+  def mouseMoveEvent(self, event):
+    if self.is_selecting:
+      self.current_pos = event.position().toPoint()
+      self.update()
+
+  def mouseReleaseEvent(self, event):
+    if event.button() == Qt.MouseButton.LeftButton and self.is_selecting:
+      self.is_selecting = False
+      rect = QRect(self.start_pos, event.position().toPoint()).normalized()
+      if rect.width() < 3 or rect.height() < 3:
+        self._cancel()
+        return
+      cropped = self.screenshot_qimage.copy(rect)
+      self._finish_capture(cropped)
+
+  # -- Keyboard events --------------------------------------------------
+
+  def keyPressEvent(self, event):
+    if event.key() == Qt.Key.Key_Escape:
+      self._cancel()
+    elif event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+      self._capture_fullscreen()
+
+  # -- Capture logic ----------------------------------------------------
+
+  def _finish_capture(self, qimage):
+    """Copy to clipboard, optionally save, notify parent, close."""
+    copy_image_to_clipboard(qimage)
+    filepath = self._save(qimage) if self.save_to_disk else None
+    self.close()
     if self.on_done:
       self.on_done(filepath)
 
   def _capture_fullscreen(self):
-    """Capture the entire screen without selection."""
-    self._stop_kb_listener()
-    self.root.quit()
-    self._copy_to_clipboard(self.screenshot)
-    filepath = self._save(self.screenshot) if self.save_to_disk else None
-    if self.on_done:
-      self.on_done(filepath)
+    """Capture the entire screen from the overlay."""
+    self._finish_capture(self.screenshot_qimage)
 
-  def _save(self, image):
+  def _save(self, qimage):
     folder = os.path.expanduser(self.save_folder)
     os.makedirs(folder, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     ext = self.fmt
     filepath = os.path.join(folder, f"{self.filename_prefix}_{timestamp}.{ext}")
     if ext in ("jpg", "jpeg"):
-      image.convert("RGB").save(filepath, "JPEG", quality=85)
+      qimage.save(filepath, "JPEG", 85)
     elif ext == "webp":
-      image.save(filepath, "WEBP", quality=85)
+      qimage.save(filepath, "WEBP", 85)
     else:
-      image.save(filepath, "PNG")
+      qimage.save(filepath, "PNG")
     return filepath
 
-  def _copy_to_clipboard(self, image):
-    copy_image_to_clipboard(image)
+  def _cancel(self):
+    self.close()
+    if self.on_done:
+      self.on_done(None)
+
+  # -- Standalone (no overlay) ------------------------------------------
 
   def capture_fullscreen_direct(self):
     """Capture entire screen immediately, no overlay."""
-    with mss.mss() as sct:
-      monitor = sct.monitors[0]
-      raw = sct.grab(monitor)
-      screenshot = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
-
-    self._copy_to_clipboard(screenshot)
-    filepath = self._save(screenshot) if self.save_to_disk else None
+    self._take_screenshot()
+    copy_image_to_clipboard(self.screenshot_qimage)
+    filepath = self._save(self.screenshot_qimage) if self.save_to_disk else None
     if self.on_done:
       self.on_done(filepath)
-
-  def _cancel(self):
-    self._stop_kb_listener()
-    self.root.quit()
-
-  def _stop_kb_listener(self):
-    if hasattr(self, '_kb_listener') and self._kb_listener.running:
-      self._kb_listener.stop()

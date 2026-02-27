@@ -30,12 +30,20 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-xinerama0 libxkbcommon-x11-0 libegl1
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
 
       - name: Build executable
+        env:
+          QT_QPA_PLATFORM: ${{ runner.os == 'Linux' && 'offscreen' || '' }}
         run: pyinstaller --onefile --noconsole --name ImmediPaste main.py
 
       - name: Sign executable (Windows)
