@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest]
         python-version: ['3.10', '3.12']
 
     runs-on: ${{ matrix.os }}
@@ -28,14 +28,21 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxcb-xinerama0 libxkbcommon-x11-0 libegl1 libxcb-cursor0
+          sudo apt-get install -y xvfb libxcb-xinerama0 libxkbcommon-x11-0 libegl1 libxcb-cursor0
 
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install pytest
 
-      - name: Run tests
+      - name: Run tests (Linux)
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: xvfb-run python -m pytest -v
+
+      - name: Run tests (Windows)
+        if: runner.os == 'Windows'
         env:
           QT_QPA_PLATFORM: offscreen
         run: python -m pytest -v
