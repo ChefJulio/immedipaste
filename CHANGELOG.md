@@ -6,7 +6,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v4 (current)
 
-- `-------` Customizable modifier-to-tool mappings for annotation editor, config v4
+- `17e9ce4` Customizable modifier-to-tool mappings for annotation editor, config v4
   - New config keys: `annotate_shift_tool`, `annotate_ctrl_tool`, `annotate_alt_tool`
   - Default Alt modifier changed from rectangle to text (Alt+click places text)
   - Settings UI: 3 combo boxes under annotation checkbox for Shift/Ctrl/Alt tool assignment
