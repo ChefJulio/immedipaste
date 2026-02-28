@@ -6,7 +6,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v5 (current)
 
-- `-------` Change default save format from JPG to PNG
+- `a114ed7` Change default save format from JPG to PNG
   - Default prefix "screenshot" + default format "png" for new installs
   - Updated all parameter defaults and fallbacks across main.py, capture.py, annotation_editor.py, platform_utils.py
   - Format combo box reordered: PNG first
