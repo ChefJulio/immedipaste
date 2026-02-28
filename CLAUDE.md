@@ -14,15 +14,16 @@ See `requirements.txt` for pinned deps. PySide6 is LGPL 3.0, mss is MIT. If dist
 ## Project Structure
 
 ```
-main.py             # Entry point, tray icon, settings dialog, config, hotkey bridge
-capture.py          # CaptureOverlay widget - region/window/fullscreen capture + save
-log.py              # Centralized logging with rotating file handler + fallback dirs
-platform_utils.py   # Cross-platform clipboard and default folder detection
-window_utils.py     # Windows-only window detection via Win32 ctypes/DWM APIs
-config.json         # User settings (gitignored, auto-created from DEFAULT_CONFIG on first run)
-test_*.py           # pytest test suite (66 tests)
-ImmediPaste.spec    # PyInstaller build config (excluded Qt modules, UPX, no console)
-requirements.txt    # 3 deps: mss, pynput, PySide6
+main.py               # Entry point, tray icon, settings dialog, config, hotkey bridge
+capture.py             # CaptureOverlay widget - region/window/fullscreen capture
+annotation_editor.py   # Annotation editor - drawing tools, toolbar, compositing
+log.py                 # Centralized logging with rotating file handler + fallback dirs
+platform_utils.py      # Cross-platform clipboard, save_qimage, default folder detection
+window_utils.py        # Windows-only window detection via Win32 ctypes/DWM APIs
+config.json            # User settings (gitignored, auto-created from DEFAULT_CONFIG on first run)
+test_*.py              # pytest test suite (100 tests)
+ImmediPaste.spec       # PyInstaller build config (excluded Qt modules, UPX, no console)
+requirements.txt       # 3 deps: mss, pynput, PySide6
 ```
 
 ## Architecture
@@ -34,6 +35,11 @@ ImmediPaste (main.py) - not a QWidget, owns the QApplication
   |   |-- window_triggered signal
   |   `-- fullscreen_triggered signal
   |-- CaptureOverlay (QWidget): fullscreen overlay for selection
+  |-- AnnotationEditor (QWidget): annotation editor with drawing tools
+  |   |-- AnnotationToolbar (QWidget): draggable floating toolbar
+  |   |-- Drawing tools: freehand, arrow (4 styles), oval, rectangle, text
+  |   |-- Undo/redo stack, compositing, coordinate transform
+  |   `-- on_image_ready callback from CaptureOverlay when annotation mode on
   |-- SettingsDialog (QDialog): live config editing (debounced auto-save)
   |   |-- HotkeyEdit (QLineEdit subclass): click-to-record hotkey widget
   |   `-- Folder validation: warns on invalid/non-writable save paths
@@ -51,9 +57,11 @@ ImmediPaste (main.py) - not a QWidget, owns the QApplication
 
 ### Capture Flows
 
-**Region and window capture:** `trigger_capture()` / `trigger_window_capture()` -> creates `CaptureOverlay` -> overlay shown fullscreen -> user interacts -> `_finish_capture(qimage)` -> `copy_image_to_clipboard()` + `_save()` -> `on_done(filepath, error=None)` callback -> `_on_capture_done()` -> tray notification.
+**Region and window capture:** `trigger_capture()` / `trigger_window_capture()` -> creates `CaptureOverlay` -> overlay shown fullscreen -> user interacts -> `_finish_capture(qimage)` -> `copy_image_to_clipboard()` + `save_qimage()` -> `on_done(filepath, error=None)` callback -> `_on_capture_done()` -> tray notification.
 
 **Fullscreen capture (different):** `trigger_fullscreen()` -> creates `CaptureOverlay` -> calls `overlay.capture_fullscreen_direct()` -> **no overlay shown, no user interaction** -> same `_finish_capture()` path onward. This bypasses the overlay display entirely.
+
+**With annotation mode on:** All three capture modes pass `on_image_ready` callback to `CaptureOverlay`. When set, `_finish_capture()` skips clipboard/save entirely and calls `on_image_ready(qimage)` instead. `ImmediPaste._open_annotation_editor(qimage)` creates `AnnotationEditor` -> user annotates -> Enter composites annotations + clipboard/save -> `_on_capture_done()`. Escape discards. **Nothing is saved or copied to clipboard until the user presses Enter.**
 
 ### Single Instance Lock
 
@@ -93,10 +101,10 @@ Last 5 captures stored in `capture_history` list (`MAX_HISTORY = 5`). Shown in t
 
 **Not checked into git.** `config.json` is gitignored and auto-created from `DEFAULT_CONFIG` on first run. No need to ship a default -- `load_config()` handles the missing file case. Config lives next to the executable (or script in dev). Schema is versioned (`config_version` field). When new keys are added to `DEFAULT_CONFIG`, bump `CONFIG_VERSION` and `migrate_config()` auto-fills missing keys on load. Never delete keys from `DEFAULT_CONFIG` without a migration path.
 
-**Current DEFAULT_CONFIG (v2):**
+**Current DEFAULT_CONFIG (v3):**
 ```python
 {
-  "config_version": 2,
+  "config_version": 3,
   "save_folder": default_save_folder(),  # platform-specific
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_window": "<ctrl>+<alt>+<shift>+d",
@@ -105,6 +113,7 @@ Last 5 captures stored in `capture_history` list (`MAX_HISTORY = 5`). Shown in t
   "filename_prefix": "immedipaste",
   "save_to_disk": True,
   "launch_on_startup": False,
+  "annotate_captures": False,
 }
 ```
 
@@ -118,7 +127,10 @@ Last 5 captures stored in `capture_history` list (`MAX_HISTORY = 5`). Shown in t
 Custom widget for recording hotkey combos. Click to enter recording mode, press key combo, auto-formats for display. Requires at least one modifier key. Stores pynput format internally (`<ctrl>+<alt>+s`), displays user-friendly format (`Ctrl + Alt + S`). Emits `changed` signal.
 
 ### CaptureOverlay (QWidget, in capture.py)
-Plain QWidget (not QDialog) shown fullscreen. Holds `screenshot_qimage`, `screenshot_pixmap` (unmodified), and `dimmed_pixmap` (darkened). `on_done` callback invoked after `close()`. Reference cleared to `None` in `_on_capture_done()`.
+Plain QWidget (not QDialog) shown fullscreen. Holds `screenshot_qimage`, `screenshot_pixmap` (unmodified), and `dimmed_pixmap` (darkened). `on_done` callback invoked after `close()`. When `on_image_ready` is set (annotation mode), `_finish_capture` hands off the QImage without saving/copying. Reference cleared to `None` in `_on_capture_done()`.
+
+### AnnotationEditor (QWidget, in annotation_editor.py)
+Fullscreen annotation editor opened when `annotate_captures` is enabled. Displays captured image with dark surround. Drawing tools: freehand (default drag), arrow (Shift+drag, 4 styles: standard/open/double/thick, line/box drag modes), oval (Ctrl+drag), rectangle (Alt+drag), text (toolbar click+place). Draggable toolbar with tool buttons, arrow style/mode selectors, color picker (default red), stroke width (1-20), font size (8-72), undo/redo. Coordinates stored in image-space; screen-to-image transform via `_scale` factor. Enter composites annotations onto QImage copy and saves/copies; Escape discards. `_saved` flag prevents double-fire on closeEvent.
 
 ### Tray Icon
 Drawn programmatically with `QPainter` on a `QPixmap` (camera icon). No image asset file -- if you want to change the icon, edit `create_tray_icon()` in `main.py`.
@@ -156,7 +168,7 @@ Drawn programmatically with `QPainter` on a `QPixmap` (camera icon). No image as
 - **Default save folder:** Windows: `~/OneDrive/Pictures/Screenshots` (if exists), else `~/Pictures/Screenshots`. macOS: `~/Desktop`. Linux: `~/Pictures/Screenshots`.
 - **File explorer:** Windows: `explorer /select,{path}`. macOS: `open -R {path}`. Linux: `xdg-open {dirname}`.
 - **Multi-monitor:** `mss.monitors[0]` is the combined virtual screen on Windows. On macOS, mss returns each display separately -- `monitors[0]` is still the "all-in-one" virtual screen but compositing behavior differs. On Linux/X11 it works like Windows; on Wayland, mss has limited support. **Not verified on non-Windows -- treat as untested.**
-- **Image quality:** JPEG and WebP hardcoded to quality 85 in `capture.py`. No config key for this.
+- **Image quality:** JPEG and WebP hardcoded to quality 85 in `platform_utils.save_qimage()`. No config key for this.
 
 ## Code Conventions
 
@@ -178,15 +190,16 @@ python -m pytest test_capture.py -k save  # Filter by name
 
 Tests mock `mss` (no display needed), clipboard operations, and file I/O. QApplication is created once per test module.
 
-### What's Tested (66 tests)
+### What's Tested (100 tests)
 | Module | Tests | Covers |
 |--------|-------|--------|
+| test_annotation_editor.py | 28 | Data model, compositing, undo/redo, coordinate conversion, save/cancel, tool-from-modifiers |
 | test_capture.py | 10 | Save formats (jpg/png/webp), custom prefix, folder creation, invalid paths, callback flow, cancel |
 | test_config.py | 7 | Load default, read existing, corruption recovery, write errors, required keys |
 | test_hotkey_edit.py | 8 | Key-to-pynput: letters, digits, F-keys, specials, navigation, arrows |
 | test_log.py | 7 | Logger creation, handlers, naming, deduplication, log dir resolution |
 | test_platform_utils.py | 4 | Clipboard success/failure, default folder platform checks |
-| test_integration.py | 10 | Full capture pipeline, clipboard-only mode, double-trigger blocking, history limit, config migration |
+| test_integration.py | 16 | Full capture pipeline, clipboard-only mode, double-trigger blocking, history limit, config migration (v2->v3), on_image_ready callback routing |
 | test_improvements.py | 20 | Lock file stale detection (mocked locking), stale break failure, no-timestamp fallback, config save debounce, dialog close flush, folder validation (incl. relative paths), listener error handling, tray icon constants |
 
 ### What's NOT Tested
@@ -200,6 +213,10 @@ Tests mock `mss` (no display needed), clipboard operations, and file I/O. QAppli
 - Multi-monitor screenshot capture
 - Programmatic tray icon rendering
 - Settings live-reload (listener restart)
+- Annotation editor mouse interaction (would need pytest-qt)
+- Annotation toolbar dragging and tool button clicks
+- Text tool inline QLineEdit interaction
+- Arrow head geometry rendering accuracy
 
 Would need `pytest-qt` for Qt widget testing and a Windows-specific environment for Win32 tests.
 
@@ -228,6 +245,12 @@ The spec file excludes unused Qt modules (QtNetwork, QtQml, QtQuick, QtSvg, and 
 6. **`_overlay` reference lifecycle.** Set to `None` in `_on_capture_done()`. `self.capturing` flag prevents double-triggers, but the QWidget may still exist in memory until Python GC runs.
 
 7. **Stale lock file auto-recovery.** Lock file contains a timestamp. If the lock is older than `LOCK_TIMEOUT_SECONDS` (1 hour), it's automatically broken on next startup. Manual deletion is no longer needed for crash recovery.
+
+8. **Annotation editor Enter vs text input.** When a text `QLineEdit` is active, Enter confirms the text annotation (consumed by `returnPressed`). When no text input is active, Enter saves the composited image. Escape cancels text input if active, otherwise closes the editor.
+
+9. **Modifier key conflicts in annotation editor.** Ctrl+drag = oval tool, Ctrl+Z = undo. These don't conflict because Ctrl+Z is keyboard-only and fires on `keyPressEvent`, while Ctrl+drag is a mouse event. Undo is also blocked while `_drawing` is True.
+
+10. **Annotation coordinates are image-space.** All annotation points are stored relative to the original QImage, not the screen. The editor uses `_scale` factor and `_image_rect` offset for display. During compositing (`_composite()`), no transform is needed.
 
 ## Common Tasks
 

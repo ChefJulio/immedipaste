@@ -33,7 +33,7 @@ else:
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 
-CONFIG_VERSION = 2
+CONFIG_VERSION = 3
 
 DEFAULT_CONFIG = {
   "config_version": CONFIG_VERSION,
@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
   "filename_prefix": "immedipaste",
   "save_to_disk": True,
   "launch_on_startup": False,
+  "annotate_captures": False,
 }
 
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -370,6 +371,11 @@ class SettingsDialog(QDialog):
     self.save_disk_check.setChecked(config.get("save_to_disk", True))
     layout.addWidget(self.save_disk_check)
 
+    # Annotation editor checkbox
+    self.annotate_check = QCheckBox("Open annotation editor after capture")
+    self.annotate_check.setChecked(config.get("annotate_captures", False))
+    layout.addWidget(self.annotate_check)
+
     # Launch on startup checkbox
     self.startup_check = QCheckBox("Launch on startup")
     self.startup_check.setChecked(config.get("launch_on_startup", False))
@@ -394,6 +400,7 @@ class SettingsDialog(QDialog):
     self.fmt_combo.currentTextChanged.connect(self._emit_change)
     self.prefix_edit.editingFinished.connect(self._emit_change)
     self.save_disk_check.stateChanged.connect(self._emit_change)
+    self.annotate_check.stateChanged.connect(self._emit_change)
     self.startup_check.stateChanged.connect(self._emit_change)
 
   def done(self, result: int) -> None:
@@ -459,6 +466,7 @@ class SettingsDialog(QDialog):
       "format": self.fmt_combo.currentText(),
       "filename_prefix": self.prefix_edit.text(),
       "save_to_disk": self.save_disk_check.isChecked(),
+      "annotate_captures": self.annotate_check.isChecked(),
       "launch_on_startup": self.startup_check.isChecked(),
     }
 
@@ -470,6 +478,7 @@ class ImmediPaste:
     self.tray_icon: QSystemTrayIcon | None = None
     self.capture_history: list[str] = []
     self._overlay: CaptureOverlay | None = None
+    self._editor = None
     self._last_capture_path: str | None = None
 
     # Ensure save folder exists
@@ -479,6 +488,25 @@ class ImmediPaste:
         os.makedirs(folder, exist_ok=True)
       except OSError as e:
         log.warning("Cannot create save folder '%s': %s", folder, e)
+
+  def _get_image_ready_callback(self) -> Callable | None:
+    """Return an image callback if annotation mode is enabled, else None."""
+    if not self.config.get("annotate_captures", False):
+      return None
+    return self._open_annotation_editor
+
+  def _open_annotation_editor(self, qimage) -> None:
+    """Open the annotation editor with the captured image."""
+    from annotation_editor import AnnotationEditor
+    self._editor = AnnotationEditor(
+      qimage=qimage,
+      save_folder=self.config["save_folder"],
+      fmt=self.config.get("format", "jpg"),
+      save_to_disk=self.config.get("save_to_disk", True),
+      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      on_done=self._on_capture_done,
+    )
+    self._editor.show()
 
   def trigger_capture(self) -> None:
     """Open the region selection overlay."""
@@ -492,6 +520,7 @@ class ImmediPaste:
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "immedipaste"),
       on_done=self._on_capture_done,
+      on_image_ready=self._get_image_ready_callback(),
     )
     self._overlay.start()
 
@@ -517,6 +546,7 @@ class ImmediPaste:
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "immedipaste"),
       on_done=self._on_capture_done,
+      on_image_ready=self._get_image_ready_callback(),
       mode="window",
     )
     self._overlay.start()
@@ -533,12 +563,14 @@ class ImmediPaste:
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "immedipaste"),
       on_done=self._on_capture_done,
+      on_image_ready=self._get_image_ready_callback(),
     )
     self._overlay.capture_fullscreen_direct()
 
   def _on_capture_done(self, filepath: str | None, error: str | None = None) -> None:
     self.capturing = False
     self._overlay = None
+    self._editor = None
 
     # User cancelled -- reset state silently, no notification
     if error == "cancelled":
@@ -729,14 +761,22 @@ class ImmediPaste:
     self.tray_icon.messageClicked.connect(self._on_notification_clicked)
     self.tray_icon.show()
 
+    self.app.aboutToQuit.connect(self._shutdown)
+
     log.info("ImmediPaste running (region=%s, window=%s, fullscreen=%s)",
       self.config.get("hotkey_region"), self.config.get("hotkey_window"),
       self.config.get("hotkey_fullscreen"))
 
     exit_code = self.app.exec()
-    self._listener.stop()
-    log.info("ImmediPaste exiting")
     sys.exit(exit_code)
+
+  def _shutdown(self) -> None:
+    """Clean up resources before the application exits."""
+    try:
+      self._listener.stop()
+    except Exception as e:
+      log.warning("Failed to stop hotkey listener on shutdown: %s", e)
+    log.info("ImmediPaste exiting")
 
 
 LOCK_TIMEOUT_SECONDS = 3600  # 1 hour

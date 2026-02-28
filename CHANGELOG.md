@@ -4,7 +4,20 @@ All notable changes to ImmediPaste, in reverse chronological order.
 
 Format: `hash` or `-------` (pending) followed by description. Pending hashes get backfilled on the next changelog update.
 
-## Config v2 (current)
+## Config v3 (current)
+
+- `-------` Add annotation editor with drawing tools, config v3
+  - New `annotate_captures` setting (off by default) opens annotation editor after capture
+  - Tools: freehand (default drag), arrow (Shift+drag), oval (Ctrl+drag), rectangle (Alt+drag), text (toolbar)
+  - 4 arrow styles: standard, open, double-headed, thick; line/box drag modes
+  - Draggable toolbar with color picker, stroke width, font size, undo/redo
+  - Nothing saved or copied to clipboard until user confirms with Enter; Escape discards
+  - Extracted `save_qimage()` to `platform_utils.py` (shared by CaptureOverlay and AnnotationEditor)
+  - `on_image_ready` callback on CaptureOverlay intercepts capture flow for annotation mode
+  - New module `annotation_editor.py` (~600 lines)
+  - 34 new tests (100 total): data model, compositing, undo/redo, coordinates, save/cancel, integration
+
+## Config v2
 
 - `0df6889` Fix lock truncation, cancel notification, hotkey parse, tray labels, error messages
   - Lock file opened with "r+" (no truncation) to preserve timestamp for other instances

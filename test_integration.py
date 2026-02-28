@@ -129,6 +129,104 @@ class TestCapturePipeline:
     msg = ip.tray_icon.showMessage.call_args[0][1]
     assert "Windows" in msg
 
+  def test_on_image_ready_skips_clipboard_and_save(self, tmp_path, monkeypatch):
+    """When on_image_ready is set, _finish_capture should NOT save or copy."""
+    from capture import CaptureOverlay
+    received = {}
+
+    def on_image_ready(qimage):
+      received["qimage"] = qimage
+
+    overlay = CaptureOverlay(
+      save_folder=str(tmp_path), fmt="png",
+      save_to_disk=True,
+      on_image_ready=on_image_ready,
+    )
+    img = QImage(100, 100, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 128, 255))
+
+    with patch.object(overlay, "close"), \
+         patch("capture.copy_image_to_clipboard") as mock_clip:
+      overlay._finish_capture(img)
+
+    # Image was handed off, clipboard was NOT called
+    assert "qimage" in received
+    assert received["qimage"].width() == 100
+    mock_clip.assert_not_called()
+    # No files saved
+    import os
+    saved_files = [f for f in os.listdir(str(tmp_path)) if f.endswith(".png")]
+    assert len(saved_files) == 0
+
+  def test_on_image_ready_none_preserves_normal_flow(self, tmp_path, monkeypatch):
+    """When on_image_ready is None, normal clipboard+save flow happens."""
+    from capture import CaptureOverlay
+    results = {}
+
+    def on_done(filepath, error=None):
+      results["filepath"] = filepath
+      results["error"] = error
+
+    overlay = CaptureOverlay(
+      save_folder=str(tmp_path), fmt="png",
+      save_to_disk=True, on_done=on_done,
+      on_image_ready=None,
+    )
+    img = QImage(100, 100, QImage.Format.Format_ARGB32)
+    img.fill(QColor(0, 128, 255))
+
+    with patch.object(overlay, "close"):
+      overlay._finish_capture(img)
+
+    assert results["filepath"] is not None
+    assert results["error"] is None
+
+  def test_fullscreen_with_image_ready_skips_save(self, tmp_path, monkeypatch):
+    """capture_fullscreen_direct should hand off to on_image_ready."""
+    from capture import CaptureOverlay
+    received = {}
+
+    def on_image_ready(qimage):
+      received["qimage"] = qimage
+
+    overlay = CaptureOverlay(
+      save_folder=str(tmp_path), fmt="png",
+      save_to_disk=True,
+      on_image_ready=on_image_ready,
+    )
+
+    with patch("capture.mss.mss") as mock_mss, \
+         patch("capture.copy_image_to_clipboard") as mock_clip:
+      ctx = MagicMock()
+      ctx.monitors = [{"left": 0, "top": 0, "width": 100, "height": 100}]
+      grab_result = MagicMock()
+      grab_result.bgra = bytes(100 * 100 * 4)
+      grab_result.width = 100
+      grab_result.height = 100
+      ctx.grab.return_value = grab_result
+      mock_mss.return_value.__enter__ = lambda s: ctx
+      mock_mss.return_value.__exit__ = MagicMock(return_value=False)
+
+      overlay.capture_fullscreen_direct()
+
+    assert "qimage" in received
+    mock_clip.assert_not_called()
+
+  def test_annotate_captures_routes_to_editor(self, tmp_path, monkeypatch):
+    """When annotate_captures is True, trigger should set on_image_ready."""
+    ip = self._make_app(tmp_path, monkeypatch)
+    ip.config["annotate_captures"] = True
+    cb = ip._get_image_ready_callback()
+    assert cb is not None
+    assert cb == ip._open_annotation_editor
+
+  def test_annotate_off_no_image_callback(self, tmp_path, monkeypatch):
+    """When annotate_captures is False, no image callback is returned."""
+    ip = self._make_app(tmp_path, monkeypatch)
+    ip.config["annotate_captures"] = False
+    cb = ip._get_image_ready_callback()
+    assert cb is None
+
 
 # -- Config migration -------------------------------------------------------
 
@@ -157,6 +255,15 @@ class TestConfigMigration:
     current_config = dict(main.DEFAULT_CONFIG)
     changed = migrate_config(current_config)
     assert changed is False
+
+  def test_v2_to_v3_adds_annotate_captures(self):
+    v2_config = dict(main.DEFAULT_CONFIG)
+    v2_config["config_version"] = 2
+    del v2_config["annotate_captures"]
+    changed = migrate_config(v2_config)
+    assert changed is True
+    assert v2_config["annotate_captures"] is False
+    assert v2_config["config_version"] == CONFIG_VERSION
 
   def test_load_triggers_migration(self, tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CONFIG_PATH", str(tmp_path / "config.json"))

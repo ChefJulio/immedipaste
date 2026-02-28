@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
 from typing import Callable, TYPE_CHECKING
 
 import mss
@@ -10,7 +9,7 @@ from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen, QFont, QFontD
 from PySide6.QtWidgets import QWidget
 
 from log import get_logger
-from platform_utils import copy_image_to_clipboard
+from platform_utils import copy_image_to_clipboard, save_qimage
 
 if TYPE_CHECKING:
   from PySide6.QtGui import QPaintEvent, QMouseEvent, QKeyEvent
@@ -24,6 +23,7 @@ class CaptureOverlay(QWidget):
   def __init__(self, save_folder: str, fmt: str = "jpg", save_to_disk: bool = True,
                filename_prefix: str = "immedipaste",
                on_done: Callable[..., None] | None = None,
+               on_image_ready: Callable[..., None] | None = None,
                mode: str = "region"):
     super().__init__()
     self.save_folder = save_folder
@@ -31,6 +31,7 @@ class CaptureOverlay(QWidget):
     self.save_to_disk = save_to_disk
     self.filename_prefix = filename_prefix
     self.on_done = on_done
+    self.on_image_ready = on_image_ready
     self.mode = mode  # "region" or "window"
 
     # Region mode state
@@ -213,6 +214,12 @@ class CaptureOverlay(QWidget):
 
   def _finish_capture(self, qimage: QImage) -> None:
     """Copy to clipboard, optionally save, notify parent, close."""
+    if self.on_image_ready:
+      # Annotation mode: hand off image without saving or copying to clipboard
+      self.close()
+      self.on_image_ready(qimage)
+      return
+
     clipboard_ok = copy_image_to_clipboard(qimage)
     filepath = self._save(qimage) if self.save_to_disk else None
     self.close()
@@ -235,32 +242,7 @@ class CaptureOverlay(QWidget):
     self._finish_capture(self.screenshot_qimage)
 
   def _save(self, qimage: QImage) -> str | None:
-    try:
-      folder = os.path.expanduser(self.save_folder)
-      os.makedirs(folder, exist_ok=True)
-    except OSError as e:
-      log.error("Cannot create save folder '%s': %s", self.save_folder, e)
-      return None
-
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")[:-3]  # milliseconds
-    ext = self.fmt
-    # Strip path separators and traversal from prefix to prevent writing outside save folder
-    safe_prefix = self.filename_prefix.replace("/", "_").replace("\\", "_").replace("..", "_")
-    filepath = os.path.join(folder, f"{safe_prefix}_{timestamp}.{ext}")
-
-    if ext in ("jpg", "jpeg"):
-      ok = qimage.save(filepath, "JPEG", 85)
-    elif ext == "webp":
-      ok = qimage.save(filepath, "WEBP", 85)
-    else:
-      ok = qimage.save(filepath, "PNG")
-
-    if not ok:
-      log.error("Failed to save screenshot to %s", filepath)
-      return None
-
-    log.debug("Saved screenshot: %s", filepath)
-    return filepath
+    return save_qimage(qimage, self.save_folder, self.fmt, self.filename_prefix)
 
   def _cancel(self) -> None:
     self.close()
@@ -277,6 +259,11 @@ class CaptureOverlay(QWidget):
       log.error("Failed to take fullscreen screenshot: %s", e)
       if self.on_done:
         self.on_done(None, error=f"Screenshot failed: {e}")
+      return
+
+    if self.on_image_ready:
+      # Annotation mode: hand off image without saving or copying to clipboard
+      self.on_image_ready(self.screenshot_qimage)
       return
 
     clipboard_ok = copy_image_to_clipboard(self.screenshot_qimage)
