@@ -33,7 +33,7 @@ else:
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 
-CONFIG_VERSION = 4
+CONFIG_VERSION = 5
 
 DEFAULT_CONFIG = {
   "config_version": CONFIG_VERSION,
@@ -42,10 +42,12 @@ DEFAULT_CONFIG = {
   "hotkey_window": "<ctrl>+<alt>+<shift>+d",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+f",
   "format": "jpg",
-  "filename_prefix": "immedipaste",
+  "filename_prefix": "screenshot",
+  "filename_suffix": "%Y-%m-%d_%H-%M-%S",
   "save_to_disk": True,
   "launch_on_startup": False,
   "annotate_captures": False,
+  "annotate_default_tool": "freehand",
   "annotate_shift_tool": "arrow",
   "annotate_ctrl_tool": "oval",
   "annotate_alt_tool": "text",
@@ -364,8 +366,13 @@ class SettingsDialog(QDialog):
     form.addRow("Save format:", self.fmt_combo)
 
     # Filename prefix
-    self.prefix_edit = QLineEdit(config.get("filename_prefix", "immedipaste"))
+    self.prefix_edit = QLineEdit(config.get("filename_prefix", "screenshot"))
     form.addRow("Filename prefix:", self.prefix_edit)
+
+    # Filename suffix (strftime format)
+    self.suffix_edit = QLineEdit(config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"))
+    self.suffix_edit.setToolTip("strftime format for date/time in filename (e.g. %%Y-%%m-%%d_%%H-%%M-%%S)")
+    form.addRow("Filename suffix:", self.suffix_edit)
 
     layout.addLayout(form)
 
@@ -390,10 +397,12 @@ class SettingsDialog(QDialog):
     mod_layout = QFormLayout()
     mod_layout.setContentsMargins(24, 0, 0, 0)
 
+    self._default_tool_combo = QComboBox()
     self._shift_tool_combo = QComboBox()
     self._ctrl_tool_combo = QComboBox()
     self._alt_tool_combo = QComboBox()
     for combo, cfg_key, default in [
+      (self._default_tool_combo, "annotate_default_tool", "freehand"),
       (self._shift_tool_combo, "annotate_shift_tool", "arrow"),
       (self._ctrl_tool_combo, "annotate_ctrl_tool", "oval"),
       (self._alt_tool_combo, "annotate_alt_tool", "text"),
@@ -404,6 +413,7 @@ class SettingsDialog(QDialog):
       idx = combo.findData(saved)
       combo.setCurrentIndex(idx if idx >= 0 else 0)
 
+    mod_layout.addRow("Default (no modifier):", self._default_tool_combo)
     mod_layout.addRow("Shift + drag:", self._shift_tool_combo)
     mod_layout.addRow("Ctrl + drag:", self._ctrl_tool_combo)
     mod_layout.addRow("Alt + click/drag:", self._alt_tool_combo)
@@ -432,8 +442,10 @@ class SettingsDialog(QDialog):
     self.fs_hotkey_edit.changed.connect(self._emit_change)
     self.fmt_combo.currentTextChanged.connect(self._emit_change)
     self.prefix_edit.editingFinished.connect(self._emit_change)
+    self.suffix_edit.editingFinished.connect(self._emit_change)
     self.save_disk_check.stateChanged.connect(self._emit_change)
     self.annotate_check.stateChanged.connect(self._emit_change)
+    self._default_tool_combo.currentIndexChanged.connect(self._emit_change)
     self._shift_tool_combo.currentIndexChanged.connect(self._emit_change)
     self._ctrl_tool_combo.currentIndexChanged.connect(self._emit_change)
     self._alt_tool_combo.currentIndexChanged.connect(self._emit_change)
@@ -501,8 +513,10 @@ class SettingsDialog(QDialog):
       "hotkey_fullscreen": self.fs_hotkey_edit.hotkey(),
       "format": self.fmt_combo.currentText(),
       "filename_prefix": self.prefix_edit.text(),
+      "filename_suffix": self.suffix_edit.text(),
       "save_to_disk": self.save_disk_check.isChecked(),
       "annotate_captures": self.annotate_check.isChecked(),
+      "annotate_default_tool": self._default_tool_combo.currentData(),
       "annotate_shift_tool": self._shift_tool_combo.currentData(),
       "annotate_ctrl_tool": self._ctrl_tool_combo.currentData(),
       "annotate_alt_tool": self._alt_tool_combo.currentData(),
@@ -547,9 +561,11 @@ class ImmediPaste:
       save_folder=self.config["save_folder"],
       fmt=self.config.get("format", "jpg"),
       save_to_disk=self.config.get("save_to_disk", True),
-      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      filename_prefix=self.config.get("filename_prefix", "screenshot"),
+      filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
       on_done=self._on_capture_done,
       modifier_tools=modifier_tools,
+      default_tool=self.config.get("annotate_default_tool", "freehand"),
     )
     self._editor.show()
     self._editor.raise_()
@@ -566,7 +582,8 @@ class ImmediPaste:
       save_folder=self.config["save_folder"],
       fmt=self.config.get("format", "jpg"),
       save_to_disk=self.config.get("save_to_disk", True),
-      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      filename_prefix=self.config.get("filename_prefix", "screenshot"),
+      filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
       on_done=self._on_capture_done,
       on_image_ready=self._get_image_ready_callback(),
     )
@@ -592,7 +609,8 @@ class ImmediPaste:
       save_folder=self.config["save_folder"],
       fmt=self.config.get("format", "jpg"),
       save_to_disk=self.config.get("save_to_disk", True),
-      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      filename_prefix=self.config.get("filename_prefix", "screenshot"),
+      filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
       on_done=self._on_capture_done,
       on_image_ready=self._get_image_ready_callback(),
       mode="window",
@@ -609,7 +627,8 @@ class ImmediPaste:
       save_folder=self.config["save_folder"],
       fmt=self.config.get("format", "jpg"),
       save_to_disk=self.config.get("save_to_disk", True),
-      filename_prefix=self.config.get("filename_prefix", "immedipaste"),
+      filename_prefix=self.config.get("filename_prefix", "screenshot"),
+      filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
       on_done=self._on_capture_done,
       on_image_ready=self._get_image_ready_callback(),
     )

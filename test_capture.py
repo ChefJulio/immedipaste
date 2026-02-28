@@ -54,6 +54,33 @@ class TestSave:
     path = overlay._save(img)
     assert "test_shot_" in os.path.basename(path)
 
+  def test_custom_suffix(self, tmp_path):
+    from capture import CaptureOverlay
+    overlay = CaptureOverlay(
+      save_folder=str(tmp_path), fmt="png",
+      filename_suffix="%Y-%m-%d_%H-%M-%S",
+    )
+    img = make_test_image()
+    path = overlay._save(img)
+    assert path is not None
+    # Should NOT contain milliseconds (old format had _NNN at end)
+    name = os.path.basename(path)
+    # Format: prefix_YYYY-MM-DD_HH-MM-SS.png
+    import re
+    assert re.search(r"\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}\.png$", name)
+
+  def test_collision_avoidance(self, tmp_path):
+    from platform_utils import save_qimage
+    img = make_test_image()
+    # Use a fixed suffix so both calls produce the same base name
+    p1 = save_qimage(img, str(tmp_path), "png", "dup", "fixed")
+    p2 = save_qimage(img, str(tmp_path), "png", "dup", "fixed")
+    assert p1 != p2
+    assert p1.endswith("dup_fixed.png")
+    assert p2.endswith("dup_fixed_2.png")
+    assert os.path.isfile(p1)
+    assert os.path.isfile(p2)
+
   def test_creates_missing_folder(self, tmp_path):
     from capture import CaptureOverlay
     nested = str(tmp_path / "sub" / "dir")

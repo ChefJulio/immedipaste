@@ -21,7 +21,8 @@ class CaptureOverlay(QWidget):
   """Fullscreen overlay for region or window capture."""
 
   def __init__(self, save_folder: str, fmt: str = "jpg", save_to_disk: bool = True,
-               filename_prefix: str = "immedipaste",
+               filename_prefix: str = "screenshot",
+               filename_suffix: str = "%Y-%m-%d_%H-%M-%S",
                on_done: Callable[..., None] | None = None,
                on_image_ready: Callable[..., None] | None = None,
                mode: str = "region"):
@@ -30,6 +31,7 @@ class CaptureOverlay(QWidget):
     self.fmt = fmt.lower()
     self.save_to_disk = save_to_disk
     self.filename_prefix = filename_prefix
+    self.filename_suffix = filename_suffix
     self.on_done = on_done
     self.on_image_ready = on_image_ready
     self.mode = mode  # "region" or "window"
@@ -242,7 +244,8 @@ class CaptureOverlay(QWidget):
     self._finish_capture(self.screenshot_qimage)
 
   def _save(self, qimage: QImage) -> str | None:
-    return save_qimage(qimage, self.save_folder, self.fmt, self.filename_prefix)
+    return save_qimage(qimage, self.save_folder, self.fmt, self.filename_prefix,
+                       self.filename_suffix)
 
   def _cancel(self) -> None:
     self.close()

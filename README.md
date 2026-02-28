@@ -70,7 +70,7 @@ Settings are stored in `config.json` (auto-created on first run) and can be edit
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+d",
   "format": "jpg",
-  "filename_prefix": "immedipaste"
+  "filename_prefix": "screenshot"
 }
 ```
 

@@ -21,7 +21,7 @@ log.py                 # Centralized logging with rotating file handler + fallba
 platform_utils.py      # Cross-platform clipboard, save_qimage, default folder detection
 window_utils.py        # Windows-only window detection via Win32 ctypes/DWM APIs
 config.json            # User settings (gitignored, auto-created from DEFAULT_CONFIG on first run)
-test_*.py              # pytest test suite (100 tests)
+test_*.py              # pytest test suite (110 tests)
 ImmediPaste.spec       # PyInstaller build config (excluded Qt modules, UPX, no console)
 requirements.txt       # 3 deps: mss, pynput, PySide6
 ```
@@ -101,26 +101,30 @@ Last 5 captures stored in `capture_history` list (`MAX_HISTORY = 5`). Shown in t
 
 **Not checked into git.** `config.json` is gitignored and auto-created from `DEFAULT_CONFIG` on first run. No need to ship a default -- `load_config()` handles the missing file case. Config lives next to the executable (or script in dev). Schema is versioned (`config_version` field). When new keys are added to `DEFAULT_CONFIG`, bump `CONFIG_VERSION` and `migrate_config()` auto-fills missing keys on load. Never delete keys from `DEFAULT_CONFIG` without a migration path.
 
-**Current DEFAULT_CONFIG (v4):**
+**Current DEFAULT_CONFIG (v5):**
 ```python
 {
-  "config_version": 4,
+  "config_version": 5,
   "save_folder": default_save_folder(),  # platform-specific
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_window": "<ctrl>+<alt>+<shift>+d",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+f",
   "format": "jpg",
-  "filename_prefix": "immedipaste",
+  "filename_prefix": "screenshot",
+  "filename_suffix": "%Y-%m-%d_%H-%M-%S",
   "save_to_disk": True,
   "launch_on_startup": False,
   "annotate_captures": False,
+  "annotate_default_tool": "freehand",
   "annotate_shift_tool": "arrow",
   "annotate_ctrl_tool": "oval",
   "annotate_alt_tool": "text",
 }
 ```
 
-**Modifier-to-tool mapping:** The `annotate_*_tool` keys control which drawing tool each modifier activates during annotation. Valid values: `"arrow"`, `"oval"`, `"rect"`, `"text"`, `"freehand"`, `"none"` (falls back to toolbar selection). Settings dialog has combo boxes for each modifier.
+**Modifier-to-tool mapping:** The `annotate_*_tool` keys control which drawing tool each modifier activates during annotation. `annotate_default_tool` sets the initial toolbar selection (no modifier). Valid values: `"arrow"`, `"oval"`, `"rect"`, `"text"`, `"freehand"`, `"none"` (falls back to toolbar selection). Settings dialog has combo boxes for each modifier.
+
+**Filename suffix:** The `filename_suffix` key is a strftime format string for the date/time portion of filenames. Default `%Y-%m-%d_%H-%M-%S` produces `2026-02-28_14-30-56`. Collision avoidance appends `_2`, `_3`, etc. when same-second captures occur.
 
 **Storage path:** Frozen exe: next to `sys.executable`. Dev mode: next to `main.py`.
 
@@ -195,16 +199,16 @@ python -m pytest test_capture.py -k save  # Filter by name
 
 Tests mock `mss` (no display needed), clipboard operations, and file I/O. QApplication is created once per test module.
 
-### What's Tested (106 tests)
+### What's Tested (110 tests)
 | Module | Tests | Covers |
 |--------|-------|--------|
-| test_annotation_editor.py | 34 | Data model, compositing, undo/redo, coordinate conversion, save/cancel, tool-from-modifiers (default + custom + none fallback), toolbar tooltips |
-| test_capture.py | 10 | Save formats (jpg/png/webp), custom prefix, folder creation, invalid paths, callback flow, cancel |
+| test_annotation_editor.py | 36 | Data model, compositing, undo/redo, coordinate conversion, save/cancel, tool-from-modifiers (default + custom + none fallback), toolbar tooltips, default tool selection |
+| test_capture.py | 12 | Save formats (jpg/png/webp), custom prefix/suffix, collision avoidance, folder creation, invalid paths, callback flow, cancel |
 | test_config.py | 7 | Load default, read existing, corruption recovery, write errors, required keys |
 | test_hotkey_edit.py | 8 | Key-to-pynput: letters, digits, F-keys, specials, navigation, arrows |
 | test_log.py | 7 | Logger creation, handlers, naming, deduplication, log dir resolution |
 | test_platform_utils.py | 4 | Clipboard success/failure, default folder platform checks |
-| test_integration.py | 17 | Full capture pipeline, clipboard-only mode, double-trigger blocking, history limit, config migration (v2->v3->v4), on_image_ready callback routing |
+| test_integration.py | 18 | Full capture pipeline, clipboard-only mode, double-trigger blocking, history limit, config migration (v2->v3->v4->v5), on_image_ready callback routing |
 | test_improvements.py | 20 | Lock file stale detection (mocked locking), stale break failure, no-timestamp fallback, config save debounce, dialog close flush, folder validation (incl. relative paths), listener error handling, tray icon constants |
 
 ### What's NOT Tested

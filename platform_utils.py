@@ -29,7 +29,8 @@ def copy_image_to_clipboard(qimage: QImage) -> bool:
 
 
 def save_qimage(qimage: QImage, save_folder: str, fmt: str = "jpg",
-                filename_prefix: str = "immedipaste") -> str | None:
+                filename_prefix: str = "screenshot",
+                filename_suffix: str = "%Y-%m-%d_%H-%M-%S") -> str | None:
   """Save a QImage to disk. Returns the filepath on success, None on failure."""
   try:
     folder = os.path.expanduser(save_folder)
@@ -38,11 +39,16 @@ def save_qimage(qimage: QImage, save_folder: str, fmt: str = "jpg",
     log.error("Cannot create save folder '%s': %s", save_folder, e)
     return None
 
-  timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")[:-3]  # milliseconds
+  timestamp = datetime.now().strftime(filename_suffix)
   ext = fmt.lower()
   # Strip path separators and traversal from prefix to prevent writing outside save folder
   safe_prefix = filename_prefix.replace("/", "_").replace("\\", "_").replace("..", "_")
-  filepath = os.path.join(folder, "%s_%s.%s" % (safe_prefix, timestamp, ext))
+  base = os.path.join(folder, "%s_%s" % (safe_prefix, timestamp))
+  filepath = "%s.%s" % (base, ext)
+  counter = 2
+  while os.path.exists(filepath):
+    filepath = "%s_%d.%s" % (base, counter, ext)
+    counter += 1
 
   if ext in ("jpg", "jpeg"):
     ok = qimage.save(filepath, "JPEG", 85)

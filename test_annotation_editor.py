@@ -42,21 +42,10 @@ class TestDataModel:
     ann = ArrowAnnotation(
       start=QPointF(0, 0), end=QPointF(100, 50),
       color=QColor(255, 0, 0), width=3.0,
-      style="standard", drag_mode="line", rect=None,
+      style="standard",
     )
     assert ann.style == "standard"
-    assert ann.drag_mode == "line"
-    assert ann.rect is None
-
-  def test_arrow_box_mode(self):
-    r = QRectF(10, 10, 80, 40)
-    ann = ArrowAnnotation(
-      start=QPointF(10, 30), end=QPointF(90, 30),
-      color=QColor(255, 0, 0), width=3.0,
-      style="standard", drag_mode="box", rect=r,
-    )
-    assert ann.drag_mode == "box"
-    assert ann.rect == r
+    assert ann.width == 3.0
 
   def test_oval_annotation(self):
     ann = OvalAnnotation(
@@ -403,3 +392,25 @@ class TestToolbarTooltips:
     # Rect has no modifier assigned
     assert toolbar._rect_btn.toolTip() == "Rectangle"
     toolbar.close()
+
+
+# -- Default tool selection ---------------------------------------------------
+
+class TestDefaultTool:
+  def test_default_tool_sets_toolbar_selection(self, tmp_path):
+    img = make_test_image()
+    editor = AnnotationEditor(
+      qimage=img, save_folder=str(tmp_path), on_done=MagicMock(),
+      default_tool="arrow",
+    )
+    assert editor._toolbar.current_tool() == "arrow"
+    editor.close()
+
+  def test_default_tool_freehand(self, tmp_path):
+    img = make_test_image()
+    editor = AnnotationEditor(
+      qimage=img, save_folder=str(tmp_path), on_done=MagicMock(),
+      default_tool="freehand",
+    )
+    assert editor._toolbar.current_tool() == "freehand"
+    editor.close()

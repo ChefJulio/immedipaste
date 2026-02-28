@@ -4,7 +4,17 @@ All notable changes to ImmediPaste, in reverse chronological order.
 
 Format: `hash` or `-------` (pending) followed by description. Pending hashes get backfilled on the next changelog update.
 
-## Config v4 (current)
+## Config v5 (current)
+
+- `-------` Default annotation tool setting, filename suffix customization, config v5
+  - New config keys: `annotate_default_tool` (default freehand), `filename_suffix` (strftime format)
+  - Settings UI: "Default (no modifier)" combo added to annotation tool mapping section
+  - Filename suffix field in settings for customizing date/time format in filenames
+  - Default suffix `%Y-%m-%d_%H-%M-%S` produces readable timestamps (e.g. `2026-02-28_14-30-56`)
+  - Collision avoidance: appends `_2`, `_3`, etc. when same-second captures occur
+  - 5 new tests (110 total): suffix format, collision avoidance, default tool, migration v4->v5
+
+## Config v4
 
 - `17e9ce4` Customizable modifier-to-tool mappings for annotation editor, config v4
   - New config keys: `annotate_shift_tool`, `annotate_ctrl_tool`, `annotate_alt_tool`
@@ -13,6 +23,11 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
   - Options per modifier: Arrow, Oval, Rectangle, Text, Freehand, None (toolbar default)
   - Toolbar tooltips update dynamically to reflect configured modifier shortcuts
   - 6 new tests (106 total): custom modifier tools, "none" fallback, tooltip updates, migration v3->v4
+- `-------` Remove arrow box drag mode; stroke width spinner controls arrow wideness directly
+  - Removed unintuitive Line/Box toggle button from annotation toolbar
+  - Removed `drag_mode` and `rect` fields from ArrowAnnotation dataclass
+  - Simplified `_arrow_dimensions` to use stroke width directly (shaft=width, head=width*4)
+  - 105 total tests (removed 1 box mode test)
 
 ## Config v3
 

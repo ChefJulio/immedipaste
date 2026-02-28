@@ -42,8 +42,6 @@ class ArrowAnnotation:
   color: QColor
   width: float
   style: str  # "open", "standard", "double"
-  drag_mode: str  # "line" or "box"
-  rect: QRectF | None  # bounding box when drag_mode="box"
 
 
 @dataclasses.dataclass
@@ -300,20 +298,6 @@ class AnnotationToolbar(QWidget):
     self._arrow_style_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
     layout.addWidget(self._arrow_style_btn)
 
-    # Arrow drag mode toggle (line vs box)
-    self._arrow_drag_mode = "line"
-    self._arrow_mode_btn = QPushButton("Line")
-    self._arrow_mode_btn.setFixedSize(40, 28)
-    self._arrow_mode_btn.setCheckable(True)
-    self._arrow_mode_btn.setToolTip("Arrow drag mode: Line (click to toggle to Box)")
-    self._arrow_mode_btn.setStyleSheet(
-      "QPushButton { color: #ccc; background: transparent; border: 1px solid #555; border-radius: 4px; font-size: 11px; }"
-      "QPushButton:checked { background: rgba(255, 255, 255, 40); border-color: #aaa; }"
-      "QPushButton:hover { background: rgba(255, 255, 255, 20); }"
-    )
-    self._arrow_mode_btn.clicked.connect(self._toggle_arrow_drag_mode)
-    layout.addWidget(self._arrow_mode_btn)
-
     # Separator
     sep2 = QLabel("|")
     sep2.setStyleSheet("QLabel { color: #555; }")
@@ -327,14 +311,18 @@ class AnnotationToolbar(QWidget):
     width_label = QLabel("W:")
     width_label.setStyleSheet("QLabel { color: #ccc; font-size: 11px; }")
     layout.addWidget(width_label)
+    spin_style = (
+      "QSpinBox { background: #333; color: #ccc; border: 1px solid #555;"
+      " border-radius: 4px; padding-right: 18px; }"
+      "QSpinBox::up-button { width: 16px; }"
+      "QSpinBox::down-button { width: 16px; }"
+    )
     self.width_spin = QSpinBox()
     self.width_spin.setRange(1, 20)
     self.width_spin.setValue(DEFAULT_STROKE_WIDTH)
-    self.width_spin.setFixedWidth(50)
+    self.width_spin.setFixedWidth(58)
     self.width_spin.setToolTip("Stroke width")
-    self.width_spin.setStyleSheet(
-      "QSpinBox { background: #333; color: #ccc; border: 1px solid #555; border-radius: 4px; }"
-    )
+    self.width_spin.setStyleSheet(spin_style)
     layout.addWidget(self.width_spin)
 
     # Font size (for text tool)
@@ -344,11 +332,9 @@ class AnnotationToolbar(QWidget):
     self.font_spin = QSpinBox()
     self.font_spin.setRange(8, 72)
     self.font_spin.setValue(DEFAULT_FONT_SIZE)
-    self.font_spin.setFixedWidth(50)
+    self.font_spin.setFixedWidth(58)
     self.font_spin.setToolTip("Text font size")
-    self.font_spin.setStyleSheet(
-      "QSpinBox { background: #333; color: #ccc; border: 1px solid #555; border-radius: 4px; }"
-    )
+    self.font_spin.setStyleSheet(spin_style)
     layout.addWidget(self.font_spin)
 
     # Separator
@@ -483,9 +469,6 @@ class AnnotationToolbar(QWidget):
   def current_arrow_style(self) -> str:
     return self._arrow_style
 
-  def current_arrow_drag_mode(self) -> str:
-    return self._arrow_drag_mode
-
   def set_undo_enabled(self, enabled: bool) -> None:
     self._undo_btn.setEnabled(enabled)
 
@@ -509,18 +492,6 @@ class AnnotationToolbar(QWidget):
     self._arrow_style = style
     short = {"open": "Hollow", "standard": "Filled", "double": "Double"}
     self._arrow_style_btn.setText(short.get(style, style))
-
-  def _toggle_arrow_drag_mode(self) -> None:
-    if self._arrow_drag_mode == "line":
-      self._arrow_drag_mode = "box"
-      self._arrow_mode_btn.setText("Box")
-      self._arrow_mode_btn.setToolTip("Arrow drag mode: Box (click to toggle to Line)")
-      self._arrow_mode_btn.setChecked(True)
-    else:
-      self._arrow_drag_mode = "line"
-      self._arrow_mode_btn.setText("Line")
-      self._arrow_mode_btn.setToolTip("Arrow drag mode: Line (click to toggle to Box)")
-      self._arrow_mode_btn.setChecked(False)
 
   # -- Dragging ---------------------------------------------------------------
 
@@ -602,17 +573,21 @@ class AnnotationEditor(QWidget):
   """Fullscreen annotation editor for captured screenshots."""
 
   def __init__(self, qimage: QImage, save_folder: str, fmt: str = "jpg",
-               save_to_disk: bool = True, filename_prefix: str = "immedipaste",
+               save_to_disk: bool = True, filename_prefix: str = "screenshot",
+               filename_suffix: str = "%Y-%m-%d_%H-%M-%S",
                on_done: Callable[..., None] | None = None,
-               modifier_tools: dict[str, str] | None = None):
+               modifier_tools: dict[str, str] | None = None,
+               default_tool: str = "freehand"):
     super().__init__()
     self._qimage = qimage
     self._save_folder = save_folder
     self._fmt = fmt
     self._save_to_disk = save_to_disk
     self._filename_prefix = filename_prefix
+    self._filename_suffix = filename_suffix
     self.on_done = on_done
     self._modifier_tools = modifier_tools or dict(_DEFAULT_MODIFIER_TOOLS)
+    self._default_tool = default_tool
 
     self._saved = False
     self._drawing = False
@@ -658,6 +633,7 @@ class AnnotationEditor(QWidget):
 
     # Toolbar
     self._toolbar = AnnotationToolbar(self, modifier_tools=self._modifier_tools)
+    self._toolbar.set_active_tool_button(self._default_tool)
     self._toolbar.undo_requested.connect(self._undo)
     self._toolbar.redo_requested.connect(self._redo)
     self._toolbar.save_requested.connect(self._save_and_close)
@@ -802,14 +778,8 @@ class AnnotationEditor(QWidget):
 
   def _arrow_dimensions(self, ann: ArrowAnnotation, length: float):
     """Compute shaft_width and head_size for an arrow annotation."""
-    if ann.drag_mode == "box" and ann.rect is not None:
-      shorter = min(ann.rect.width(), ann.rect.height())
-      shaft_width = max(shorter * 0.12, ann.width)
-      head_size = shaft_width * 1.8
-    else:
-      shaft_width = ann.width
-      head_size = ann.width * 4.0
-
+    shaft_width = ann.width
+    head_size = ann.width * 4.0
     # Cap head size to 45% of arrow length so short arrows don't get absurd heads
     head_size = min(head_size, length * 0.45)
     # Ensure a minimum visible head
@@ -978,11 +948,9 @@ class AnnotationEditor(QWidget):
         points=[pos], color=QColor(color), width=width,
       )
     elif tool == "arrow":
-      drag_mode = self._toolbar.current_arrow_drag_mode()
       self._current_ann = ArrowAnnotation(
         start=pos, end=pos, color=QColor(color), width=width,
         style=self._toolbar.current_arrow_style(),
-        drag_mode=drag_mode, rect=None,
       )
     elif tool == "oval":
       self._current_ann = OvalAnnotation(
@@ -1017,10 +985,6 @@ class AnnotationEditor(QWidget):
       self._current_ann.points.append(pos)
     elif isinstance(self._current_ann, ArrowAnnotation):
       self._current_ann.end = pos
-      if self._current_ann.drag_mode == "box":
-        self._current_ann.rect = QRectF(
-          self._current_ann.start, pos
-        ).normalized()
     elif isinstance(self._current_ann, (OvalAnnotation, RectAnnotation)):
       self._current_ann.rect = QRectF(self._drag_start, pos).normalized()
 
@@ -1182,6 +1146,7 @@ class AnnotationEditor(QWidget):
     clipboard_ok = copy_image_to_clipboard(composited)
     filepath = save_qimage(
       composited, self._save_folder, self._fmt, self._filename_prefix,
+      self._filename_suffix,
     ) if self._save_to_disk else None
 
     if not clipboard_ok and not filepath:
