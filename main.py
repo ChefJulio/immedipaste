@@ -33,7 +33,7 @@ else:
 CONFIG_PATH = os.path.join(APP_DIR, "config.json")
 
 
-CONFIG_VERSION = 3
+CONFIG_VERSION = 4
 
 DEFAULT_CONFIG = {
   "config_version": CONFIG_VERSION,
@@ -46,6 +46,9 @@ DEFAULT_CONFIG = {
   "save_to_disk": True,
   "launch_on_startup": False,
   "annotate_captures": False,
+  "annotate_shift_tool": "arrow",
+  "annotate_ctrl_tool": "oval",
+  "annotate_alt_tool": "text",
 }
 
 STARTUP_REG_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -376,6 +379,36 @@ class SettingsDialog(QDialog):
     self.annotate_check.setChecked(config.get("annotate_captures", False))
     layout.addWidget(self.annotate_check)
 
+    # Modifier-to-tool mapping combos (indented under annotation checkbox)
+    _TOOL_ITEMS = [
+      ("Arrow", "arrow"), ("Oval", "oval"), ("Rectangle", "rect"),
+      ("Text", "text"), ("Freehand", "freehand"),
+      ("None (toolbar default)", "none"),
+    ]
+    _tool_value_to_label = {v: lbl for lbl, v in _TOOL_ITEMS}
+
+    mod_layout = QFormLayout()
+    mod_layout.setContentsMargins(24, 0, 0, 0)
+
+    self._shift_tool_combo = QComboBox()
+    self._ctrl_tool_combo = QComboBox()
+    self._alt_tool_combo = QComboBox()
+    for combo, cfg_key, default in [
+      (self._shift_tool_combo, "annotate_shift_tool", "arrow"),
+      (self._ctrl_tool_combo, "annotate_ctrl_tool", "oval"),
+      (self._alt_tool_combo, "annotate_alt_tool", "text"),
+    ]:
+      for label, value in _TOOL_ITEMS:
+        combo.addItem(label, value)
+      saved = config.get(cfg_key, default)
+      idx = combo.findData(saved)
+      combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    mod_layout.addRow("Shift + drag:", self._shift_tool_combo)
+    mod_layout.addRow("Ctrl + drag:", self._ctrl_tool_combo)
+    mod_layout.addRow("Alt + click/drag:", self._alt_tool_combo)
+    layout.addLayout(mod_layout)
+
     # Launch on startup checkbox
     self.startup_check = QCheckBox("Launch on startup")
     self.startup_check.setChecked(config.get("launch_on_startup", False))
@@ -401,6 +434,9 @@ class SettingsDialog(QDialog):
     self.prefix_edit.editingFinished.connect(self._emit_change)
     self.save_disk_check.stateChanged.connect(self._emit_change)
     self.annotate_check.stateChanged.connect(self._emit_change)
+    self._shift_tool_combo.currentIndexChanged.connect(self._emit_change)
+    self._ctrl_tool_combo.currentIndexChanged.connect(self._emit_change)
+    self._alt_tool_combo.currentIndexChanged.connect(self._emit_change)
     self.startup_check.stateChanged.connect(self._emit_change)
 
   def done(self, result: int) -> None:
@@ -467,6 +503,9 @@ class SettingsDialog(QDialog):
       "filename_prefix": self.prefix_edit.text(),
       "save_to_disk": self.save_disk_check.isChecked(),
       "annotate_captures": self.annotate_check.isChecked(),
+      "annotate_shift_tool": self._shift_tool_combo.currentData(),
+      "annotate_ctrl_tool": self._ctrl_tool_combo.currentData(),
+      "annotate_alt_tool": self._alt_tool_combo.currentData(),
       "launch_on_startup": self.startup_check.isChecked(),
     }
 
@@ -498,6 +537,11 @@ class ImmediPaste:
   def _open_annotation_editor(self, qimage) -> None:
     """Open the annotation editor with the captured image."""
     from annotation_editor import AnnotationEditor
+    modifier_tools = {
+      "shift": self.config.get("annotate_shift_tool", "arrow"),
+      "ctrl": self.config.get("annotate_ctrl_tool", "oval"),
+      "alt": self.config.get("annotate_alt_tool", "text"),
+    }
     self._editor = AnnotationEditor(
       qimage=qimage,
       save_folder=self.config["save_folder"],
@@ -505,8 +549,12 @@ class ImmediPaste:
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "immedipaste"),
       on_done=self._on_capture_done,
+      modifier_tools=modifier_tools,
     )
     self._editor.show()
+    self._editor.raise_()
+    self._editor.activateWindow()
+    self._editor.setFocus()
 
   def trigger_capture(self) -> None:
     """Open the region selection overlay."""

@@ -4,18 +4,29 @@ All notable changes to ImmediPaste, in reverse chronological order.
 
 Format: `hash` or `-------` (pending) followed by description. Pending hashes get backfilled on the next changelog update.
 
-## Config v3 (current)
+## Config v4 (current)
 
-- `-------` Add annotation editor with drawing tools, config v3
+- `-------` Customizable modifier-to-tool mappings for annotation editor, config v4
+  - New config keys: `annotate_shift_tool`, `annotate_ctrl_tool`, `annotate_alt_tool`
+  - Default Alt modifier changed from rectangle to text (Alt+click places text)
+  - Settings UI: 3 combo boxes under annotation checkbox for Shift/Ctrl/Alt tool assignment
+  - Options per modifier: Arrow, Oval, Rectangle, Text, Freehand, None (toolbar default)
+  - Toolbar tooltips update dynamically to reflect configured modifier shortcuts
+  - 6 new tests (106 total): custom modifier tools, "none" fallback, tooltip updates, migration v3->v4
+
+## Config v3
+
+- `0645666` Add annotation editor with drawing tools, config v3
   - New `annotate_captures` setting (off by default) opens annotation editor after capture
-  - Tools: freehand (default drag), arrow (Shift+drag), oval (Ctrl+drag), rectangle (Alt+drag), text (toolbar)
-  - 4 arrow styles: standard, open, double-headed, thick; line/box drag modes
-  - Draggable toolbar with color picker, stroke width, font size, undo/redo
+  - Tools: freehand (default drag), arrow (Shift+drag), oval (Ctrl+drag), text (Alt+click), rectangle (toolbar)
+  - 3 arrow styles: filled (default), hollow, double-headed; line/box drag modes
+  - Draggable toolbar with color picker, stroke width, font size, undo/redo, save/cancel buttons
+  - Text annotations: click to place, drag to move, Enter confirms input
   - Nothing saved or copied to clipboard until user confirms with Enter; Escape discards
   - Extracted `save_qimage()` to `platform_utils.py` (shared by CaptureOverlay and AnnotationEditor)
   - `on_image_ready` callback on CaptureOverlay intercepts capture flow for annotation mode
-  - New module `annotation_editor.py` (~600 lines)
-  - 34 new tests (100 total): data model, compositing, undo/redo, coordinates, save/cancel, integration
+  - New module `annotation_editor.py` (~1200 lines)
+  - 40 new tests (106 total): data model, compositing, undo/redo, coordinates, save/cancel, integration
 
 ## Config v2
 

@@ -9,7 +9,7 @@ from typing import Callable, Union, TYPE_CHECKING
 from PySide6.QtCore import Qt, QPoint, QPointF, QRect, QRectF, Signal
 from PySide6.QtGui import (
   QImage, QPixmap, QPainter, QColor, QPen, QBrush, QFont,
-  QFontDatabase, QPainterPath, QCursor, QPolygonF, QIcon,
+  QFontDatabase, QFontMetricsF, QPainterPath, QCursor, QPolygonF, QIcon,
 )
 from PySide6.QtWidgets import (
   QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QSpinBox,
@@ -41,7 +41,7 @@ class ArrowAnnotation:
   end: QPointF
   color: QColor
   width: float
-  style: str  # "standard", "open", "double", "thick"
+  style: str  # "open", "standard", "double"
   drag_mode: str  # "line" or "box"
   rect: QRectF | None  # bounding box when drag_mode="box"
 
@@ -73,12 +73,11 @@ Annotation = Union[
   RectAnnotation, TextAnnotation,
 ]
 
-ARROW_STYLES = ("standard", "open", "double", "thick")
+ARROW_STYLES = ("open", "standard", "double")
 ARROW_STYLE_LABELS = {
-  "standard": "Standard",
-  "open": "Open",
+  "open": "Hollow",
+  "standard": "Filled",
   "double": "Double",
-  "thick": "Thick",
 }
 
 DEFAULT_COLOR = QColor(255, 0, 0)
@@ -181,14 +180,21 @@ class ColorButton(QPushButton):
 
 # -- Draggable toolbar --------------------------------------------------------
 
+_DEFAULT_MODIFIER_TOOLS = {"shift": "arrow", "ctrl": "oval", "alt": "text"}
+_MODIFIER_LABELS = {"shift": "Shift", "ctrl": "Ctrl", "alt": "Alt"}
+
+
 class AnnotationToolbar(QWidget):
   """Floating draggable toolbar for annotation tools."""
 
   tool_changed = Signal(str)
   undo_requested = Signal()
   redo_requested = Signal()
+  save_requested = Signal()
+  cancel_requested = Signal()
 
-  def __init__(self, parent: QWidget | None = None):
+  def __init__(self, parent: QWidget | None = None,
+               modifier_tools: dict[str, str] | None = None):
     super().__init__(parent)
     self.setWindowFlags(Qt.WindowType.SubWindow)
     self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -273,9 +279,9 @@ class AnnotationToolbar(QWidget):
     # Arrow style selector
     self._arrow_style = "standard"
     self._arrow_style_btn = QToolButton()
-    self._arrow_style_btn.setText("Std")
+    self._arrow_style_btn.setText("Filled")
     self._arrow_style_btn.setToolTip("Arrow style")
-    self._arrow_style_btn.setFixedSize(36, 28)
+    self._arrow_style_btn.setFixedSize(48, 28)
     self._arrow_style_btn.setStyleSheet(
       "QToolButton { color: #ccc; background: transparent; border: 1px solid #555; border-radius: 4px; font-size: 11px; }"
       "QToolButton:hover { background: rgba(255, 255, 255, 20); }"
@@ -372,16 +378,79 @@ class AnnotationToolbar(QWidget):
     self._redo_btn.clicked.connect(self.redo_requested.emit)
     layout.addWidget(self._redo_btn)
 
-    # Hint label
-    hint = QLabel("Enter: Save  |  Esc: Cancel")
-    hint.setStyleSheet("QLabel { color: #888; font-size: 10px; margin-left: 8px; }")
-    layout.addWidget(hint)
+    # Separator
+    sep4 = QLabel("|")
+    sep4.setStyleSheet("QLabel { color: #555; }")
+    layout.addWidget(sep4)
+
+    # Save / Cancel buttons
+    action_style = (
+      "QPushButton { color: #fff; border: 1px solid #555; border-radius: 4px; font-size: 11px; padding: 2px 8px; }"
+      "QPushButton:hover { border-color: #aaa; }"
+    )
+    self._save_btn = QPushButton("Save")
+    self._save_btn.setFixedHeight(28)
+    self._save_btn.setToolTip("Save annotated image (Enter)")
+    self._save_btn.setStyleSheet(
+      action_style.replace("color: #fff", "color: #8f8")
+    )
+    self._save_btn.clicked.connect(self.save_requested.emit)
+    layout.addWidget(self._save_btn)
+
+    self._cancel_btn = QPushButton("Cancel")
+    self._cancel_btn.setFixedHeight(28)
+    self._cancel_btn.setToolTip("Discard and cancel (Esc)")
+    self._cancel_btn.setStyleSheet(
+      action_style.replace("color: #fff", "color: #f88")
+    )
+    self._cancel_btn.clicked.connect(self.cancel_requested.emit)
+    layout.addWidget(self._cancel_btn)
 
     self._tool_group.buttonClicked.connect(self._on_tool_clicked)
+
+    # Set tooltips dynamically based on modifier-to-tool mapping
+    self._update_tool_tooltips(modifier_tools or _DEFAULT_MODIFIER_TOOLS)
 
   def _on_tool_clicked(self, btn: QPushButton) -> None:
     tool = self._button_to_tool(btn)
     self.tool_changed.emit(tool)
+
+  def _update_tool_tooltips(self, modifier_tools: dict[str, str]) -> None:
+    """Set tool button tooltips based on the current modifier-to-tool mapping."""
+    # Build reverse map: tool -> modifier display name
+    tool_to_shortcut: dict[str, str] = {}
+    for mod_key, tool in modifier_tools.items():
+      if tool != "none":
+        tool_to_shortcut[tool] = _MODIFIER_LABELS.get(mod_key, mod_key)
+
+    btn_map = {
+      "freehand": self._freehand_btn,
+      "arrow": self._arrow_btn,
+      "oval": self._oval_btn,
+      "rect": self._rect_btn,
+      "text": self._text_btn,
+    }
+    base_names = {
+      "freehand": "Freehand",
+      "arrow": "Arrow",
+      "oval": "Oval",
+      "rect": "Rectangle",
+      "text": "Text",
+    }
+    for tool_key, btn in btn_map.items():
+      shortcut = tool_to_shortcut.get(tool_key)
+      name = base_names[tool_key]
+      if shortcut:
+        if tool_key == "text":
+          btn.setToolTip("%s (%s + click)" % (name, shortcut))
+        else:
+          btn.setToolTip("%s (%s + drag)" % (name, shortcut))
+      elif tool_key == "freehand":
+        btn.setToolTip("Freehand (default drag)")
+      elif tool_key == "text":
+        btn.setToolTip("Text (click to place)")
+      else:
+        btn.setToolTip(name)
 
   def _button_to_tool(self, btn: QPushButton) -> str:
     if btn is self._freehand_btn:
@@ -438,7 +507,7 @@ class AnnotationToolbar(QWidget):
 
   def _set_arrow_style(self, style: str) -> None:
     self._arrow_style = style
-    short = {"standard": "Std", "open": "Open", "double": "Dbl", "thick": "Thk"}
+    short = {"open": "Hollow", "standard": "Filled", "double": "Double"}
     self._arrow_style_btn.setText(short.get(style, style))
 
   def _toggle_arrow_drag_mode(self) -> None:
@@ -504,7 +573,6 @@ class AnnotationTextInput(QLineEdit):
     )
     self.setMinimumWidth(100)
     self.setMaximumWidth(400)
-    self.returnPressed.connect(self._on_confirm)
     self.setFocus()
 
   def _on_confirm(self) -> None:
@@ -517,6 +585,13 @@ class AnnotationTextInput(QLineEdit):
   def keyPressEvent(self, event) -> None:
     if event.key() == Qt.Key.Key_Escape:
       self.cancelled.emit()
+      event.accept()
+      return
+    if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+      # Handle Enter ourselves and accept the event so it does NOT
+      # propagate to the parent editor (which would trigger save).
+      self._on_confirm()
+      event.accept()
       return
     super().keyPressEvent(event)
 
@@ -528,7 +603,8 @@ class AnnotationEditor(QWidget):
 
   def __init__(self, qimage: QImage, save_folder: str, fmt: str = "jpg",
                save_to_disk: bool = True, filename_prefix: str = "immedipaste",
-               on_done: Callable[..., None] | None = None):
+               on_done: Callable[..., None] | None = None,
+               modifier_tools: dict[str, str] | None = None):
     super().__init__()
     self._qimage = qimage
     self._save_folder = save_folder
@@ -536,12 +612,15 @@ class AnnotationEditor(QWidget):
     self._save_to_disk = save_to_disk
     self._filename_prefix = filename_prefix
     self.on_done = on_done
+    self._modifier_tools = modifier_tools or dict(_DEFAULT_MODIFIER_TOOLS)
 
     self._saved = False
     self._drawing = False
     self._current_ann = None  # in-progress annotation
     self._drag_start = None  # original drag start in image-space (for oval/rect)
     self._text_input = None  # active text input widget
+    self._dragging_text_idx = None  # index into _undo_stack of text being dragged
+    self._text_drag_offset = QPointF(0, 0)  # offset from click to text position
 
     # Undo/redo stacks
     self._undo_stack: list[Annotation] = []
@@ -554,6 +633,7 @@ class AnnotationEditor(QWidget):
       | Qt.WindowType.Tool
     )
     self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+    self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # Fullscreen geometry
     screen = QApplication.primaryScreen().geometry()
@@ -577,9 +657,11 @@ class AnnotationEditor(QWidget):
     painter.end()
 
     # Toolbar
-    self._toolbar = AnnotationToolbar(self)
+    self._toolbar = AnnotationToolbar(self, modifier_tools=self._modifier_tools)
     self._toolbar.undo_requested.connect(self._undo)
     self._toolbar.redo_requested.connect(self._redo)
+    self._toolbar.save_requested.connect(self._save_and_close)
+    self._toolbar.cancel_requested.connect(self._cancel_and_close)
     self._toolbar.adjustSize()
     # Position toolbar at top-center
     tx = (self.width() - self._toolbar.width()) // 2
@@ -623,17 +705,50 @@ class AnnotationEditor(QWidget):
     y = max(0.0, min(y, self._qimage.height() - 1.0))
     return QPointF(x, y)
 
+  # -- Text hit-testing -------------------------------------------------------
+
+  def _text_bounding_rect(self, ann: TextAnnotation) -> QRectF:
+    """Compute bounding rect of a text annotation in image-space."""
+    font = QFontDatabase.systemFont(QFontDatabase.SystemFont.GeneralFont)
+    font.setPointSize(ann.font_size)
+    fm = QFontMetricsF(font)
+    br = fm.boundingRect(ann.text)
+    # drawText(position, text) draws baseline at position.y()
+    return QRectF(
+      ann.position.x() + br.x(),
+      ann.position.y() + br.y(),
+      br.width(),
+      br.height(),
+    )
+
+  def _hit_test_text(self, image_pos: QPointF) -> int | None:
+    """Return index of topmost text annotation at image_pos, or None."""
+    # Search in reverse (topmost annotation first)
+    for i in range(len(self._undo_stack) - 1, -1, -1):
+      ann = self._undo_stack[i]
+      if isinstance(ann, TextAnnotation):
+        rect = self._text_bounding_rect(ann)
+        # Add a small margin for easier clicking
+        rect.adjust(-4, -4, 4, 4)
+        if rect.contains(image_pos):
+          return i
+    return None
+
   # -- Determine tool from modifiers ------------------------------------------
 
   def _tool_from_modifiers(self, mods) -> str:
-    """Determine drawing tool based on held modifier keys."""
+    """Determine drawing tool based on held modifier keys and config."""
     if mods & Qt.KeyboardModifier.ShiftModifier:
-      return "arrow"
-    if mods & Qt.KeyboardModifier.ControlModifier:
-      return "oval"
-    if mods & Qt.KeyboardModifier.AltModifier:
-      return "rect"
-    return self._toolbar.current_tool()
+      tool = self._modifier_tools.get("shift", "arrow")
+    elif mods & Qt.KeyboardModifier.ControlModifier:
+      tool = self._modifier_tools.get("ctrl", "oval")
+    elif mods & Qt.KeyboardModifier.AltModifier:
+      tool = self._modifier_tools.get("alt", "text")
+    else:
+      return self._toolbar.current_tool()
+    if tool == "none":
+      return self._toolbar.current_tool()
+    return tool
 
   # -- Paint ------------------------------------------------------------------
 
@@ -685,6 +800,22 @@ class AnnotationEditor(QWidget):
       path.lineTo(pt)
     painter.drawPath(path)
 
+  def _arrow_dimensions(self, ann: ArrowAnnotation, length: float):
+    """Compute shaft_width and head_size for an arrow annotation."""
+    if ann.drag_mode == "box" and ann.rect is not None:
+      shorter = min(ann.rect.width(), ann.rect.height())
+      shaft_width = max(shorter * 0.12, ann.width)
+      head_size = shaft_width * 1.8
+    else:
+      shaft_width = ann.width
+      head_size = ann.width * 4.0
+
+    # Cap head size to 45% of arrow length so short arrows don't get absurd heads
+    head_size = min(head_size, length * 0.45)
+    # Ensure a minimum visible head
+    head_size = max(head_size, 6.0)
+    return shaft_width, head_size
+
   def _paint_arrow(self, painter: QPainter, ann: ArrowAnnotation) -> None:
     dx = ann.end.x() - ann.start.x()
     dy = ann.end.y() - ann.start.y()
@@ -693,39 +824,44 @@ class AnnotationEditor(QWidget):
       return
 
     angle = math.atan2(dy, dx)
+    shaft_width, head_size = self._arrow_dimensions(ann, length)
 
-    if ann.drag_mode == "box" and ann.rect is not None:
-      # Box mode: shaft width derived from rectangle's shorter dimension
-      shorter = min(ann.rect.width(), ann.rect.height())
-      shaft_width = max(shorter * 0.3, ann.width)
-      head_size = shaft_width * 2.5
-    elif ann.style == "thick":
-      shaft_width = ann.width * 2.5
-      head_size = ann.width * 6
+    if ann.style == "open":
+      # Hollow arrow: entire shape drawn as an outlined polygon
+      self._paint_arrow_hollow(painter, ann, angle, shaft_width, head_size)
     else:
-      shaft_width = ann.width
-      head_size = ann.width * 4
+      # Filled arrow: solid shaft + filled triangle head
+      self._paint_arrow_filled(painter, ann, angle, shaft_width, head_size)
 
+  def _paint_arrow_filled(self, painter: QPainter, ann: ArrowAnnotation,
+                          angle: float, shaft_width: float, head_size: float) -> None:
+    """Draw a filled arrow (standard, double styles)."""
     pen = QPen(ann.color, shaft_width, Qt.PenStyle.SolidLine,
-               Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+               Qt.PenCapStyle.FlatCap, Qt.PenJoinStyle.MiterJoin)
     painter.setPen(pen)
     painter.setBrush(Qt.BrushStyle.NoBrush)
 
-    # Draw shaft
-    shaft_end_x = ann.end.x() - math.cos(angle) * head_size * 0.5
-    shaft_end_y = ann.end.y() - math.sin(angle) * head_size * 0.5
-    painter.drawLine(ann.start, QPointF(shaft_end_x, shaft_end_y))
+    # Shaft start/end -- pull back from tips so shaft doesn't overlap arrowheads
+    shaft_start = ann.start
+    shaft_end_x = ann.end.x() - math.cos(angle) * head_size * 0.7
+    shaft_end_y = ann.end.y() - math.sin(angle) * head_size * 0.7
+    if ann.style == "double":
+      # Pull shaft start forward past the back arrowhead
+      shaft_start = QPointF(
+        ann.start.x() + math.cos(angle) * head_size * 0.7,
+        ann.start.y() + math.sin(angle) * head_size * 0.7,
+      )
+    painter.drawLine(shaft_start, QPointF(shaft_end_x, shaft_end_y))
 
     # Draw arrowhead(s)
-    if ann.style == "double":
-      self._draw_arrowhead(painter, ann.start, angle + math.pi, head_size, ann.style, ann.color)
-    self._draw_arrowhead(painter, ann.end, angle, head_size, ann.style, ann.color)
-
-  def _draw_arrowhead(self, painter: QPainter, tip: QPointF, angle: float,
-                      size: float, style: str, color: QColor) -> None:
-    """Draw an arrowhead at tip pointing in direction of angle."""
     spread = math.radians(25)
+    if ann.style == "double":
+      self._draw_filled_head(painter, ann.start, angle + math.pi, head_size, spread, ann.color)
+    self._draw_filled_head(painter, ann.end, angle, head_size, spread, ann.color)
 
+  def _draw_filled_head(self, painter: QPainter, tip: QPointF, angle: float,
+                        size: float, spread: float, color: QColor) -> None:
+    """Draw a filled triangular arrowhead."""
     p1 = QPointF(
       tip.x() - size * math.cos(angle - spread),
       tip.y() - size * math.sin(angle - spread),
@@ -734,21 +870,47 @@ class AnnotationEditor(QWidget):
       tip.x() - size * math.cos(angle + spread),
       tip.y() - size * math.sin(angle + spread),
     )
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QBrush(color))
+    painter.drawPolygon(QPolygonF([tip, p1, p2]))
 
-    if style == "open":
-      # V-shaped open arrowhead
-      pen = QPen(color, max(2.0, size * 0.15), Qt.PenStyle.SolidLine,
-                 Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
-      painter.setPen(pen)
-      painter.setBrush(Qt.BrushStyle.NoBrush)
-      painter.drawLine(p1, tip)
-      painter.drawLine(tip, p2)
-    else:
-      # Filled triangle (standard, double, thick all use filled)
-      painter.setPen(Qt.PenStyle.NoPen)
-      painter.setBrush(QBrush(color))
-      head = QPolygonF([tip, p1, p2])
-      painter.drawPolygon(head)
+  def _paint_arrow_hollow(self, painter: QPainter, ann: ArrowAnnotation,
+                          angle: float, shaft_width: float, head_size: float) -> None:
+    """Draw a fully hollow (outlined) arrow shape."""
+    spread = math.radians(30)
+    # Perpendicular direction for shaft edges
+    perp_x = -math.sin(angle)
+    perp_y = math.cos(angle)
+    half_shaft = shaft_width * 0.5
+    # Head wing width (wider than shaft)
+    head_wing = head_size * math.sin(spread)
+
+    # Shaft corners at start
+    s_top = QPointF(ann.start.x() + perp_x * half_shaft,
+                    ann.start.y() + perp_y * half_shaft)
+    s_bot = QPointF(ann.start.x() - perp_x * half_shaft,
+                    ann.start.y() - perp_y * half_shaft)
+
+    # Where the head begins (shaft meets head base)
+    hx = ann.end.x() - math.cos(angle) * head_size
+    hy = ann.end.y() - math.sin(angle) * head_size
+    h_top = QPointF(hx + perp_x * half_shaft, hy + perp_y * half_shaft)
+    h_bot = QPointF(hx - perp_x * half_shaft, hy - perp_y * half_shaft)
+
+    # Head wing tips (wider than shaft)
+    wing_top = QPointF(hx + perp_x * head_wing, hy + perp_y * head_wing)
+    wing_bot = QPointF(hx - perp_x * head_wing, hy - perp_y * head_wing)
+
+    # Build polygon: start_top -> head_junction_top -> wing_top -> tip -> wing_bot -> head_junction_bot -> start_bot
+    outline = QPolygonF([
+      s_top, h_top, wing_top, ann.end, wing_bot, h_bot, s_bot,
+    ])
+
+    outline_pen = QPen(ann.color, max(1.5, ann.width * 0.4), Qt.PenStyle.SolidLine,
+                       Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.MiterJoin)
+    painter.setPen(outline_pen)
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawPolygon(outline)
 
   def _paint_oval(self, painter: QPainter, ann: OvalAnnotation) -> None:
     pen = QPen(ann.color, ann.width, Qt.PenStyle.SolidLine)
@@ -784,21 +946,28 @@ class AnnotationEditor(QWidget):
     if toolbar_geom.contains(event.position().toPoint()):
       return
 
-    # Text mode: place text input
-    if self._toolbar.current_tool() == "text" and not (
-        event.modifiers() & (Qt.KeyboardModifier.ShiftModifier
-                             | Qt.KeyboardModifier.ControlModifier
-                             | Qt.KeyboardModifier.AltModifier)):
-      pos = self._to_image_coords(event.position().toPoint())
-      if pos is not None:
-        self._place_text_input(event.position().toPoint(), pos)
-      return
-
     pos = self._to_image_coords(event.position().toPoint())
     if pos is None:
       return
 
     tool = self._tool_from_modifiers(event.modifiers())
+
+    # Text mode: drag existing text or place new text input
+    if tool == "text":
+      # Check if clicking on existing text to drag it
+      hit_idx = self._hit_test_text(pos)
+      if hit_idx is not None:
+        ann = self._undo_stack[hit_idx]
+        self._dragging_text_idx = hit_idx
+        self._text_drag_offset = QPointF(
+          ann.position.x() - pos.x(),
+          ann.position.y() - pos.y(),
+        )
+        self._drawing = True
+        return
+      self._place_text_input(event.position().toPoint(), pos)
+      return
+
     color = self._toolbar.current_color()
     width = self._toolbar.current_width()
 
@@ -823,16 +992,22 @@ class AnnotationEditor(QWidget):
       self._current_ann = RectAnnotation(
         rect=QRectF(pos, pos), color=QColor(color), width=width,
       )
-    elif tool == "text":
-      # Text with modifier held -- fall through to freehand
-      self._current_ann = FreehandAnnotation(
-        points=[pos], color=QColor(color), width=width,
-      )
 
     self._drawing = True
     self.update()
 
   def mouseMoveEvent(self, event: QMouseEvent) -> None:
+    # Text dragging
+    if self._dragging_text_idx is not None:
+      pos = self._clamp_to_image(event.position().toPoint())
+      ann = self._undo_stack[self._dragging_text_idx]
+      ann.position = QPointF(
+        pos.x() + self._text_drag_offset.x(),
+        pos.y() + self._text_drag_offset.y(),
+      )
+      self.update()
+      return
+
     if not self._drawing or self._current_ann is None:
       return
 
@@ -852,7 +1027,17 @@ class AnnotationEditor(QWidget):
     self.update()
 
   def mouseReleaseEvent(self, event: QMouseEvent) -> None:
-    if event.button() != Qt.MouseButton.LeftButton or not self._drawing:
+    if event.button() != Qt.MouseButton.LeftButton:
+      return
+
+    # Finish text drag
+    if self._dragging_text_idx is not None:
+      self._dragging_text_idx = None
+      self._drawing = False
+      self.update()
+      return
+
+    if not self._drawing:
       return
 
     self._drawing = False
@@ -945,17 +1130,25 @@ class AnnotationEditor(QWidget):
   # -- Keyboard ---------------------------------------------------------------
 
   def keyPressEvent(self, event: QKeyEvent) -> None:
-    # If text input is active, let it handle keys
+    # If text input is active, intercept Enter and Escape here
     if self._text_input is not None and self._text_input.isVisible():
       if event.key() == Qt.Key.Key_Escape:
         self._cancel_text_input()
         return
-      # Enter and other keys handled by QLineEdit itself
+      if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+        # Confirm text -- do NOT fall through to save
+        self._text_input._on_confirm()
+        return
       super().keyPressEvent(event)
       return
 
     key = event.key()
-    mods = event.modifiers()
+    # Mask out non-essential modifiers (NumLock, etc.)
+    mods = event.modifiers() & (
+      Qt.KeyboardModifier.ControlModifier
+      | Qt.KeyboardModifier.ShiftModifier
+      | Qt.KeyboardModifier.AltModifier
+    )
 
     if key == Qt.Key.Key_Escape:
       self._cancel_and_close()
@@ -1012,6 +1205,13 @@ class AnnotationEditor(QWidget):
     self.close()
     if self.on_done:
       self.on_done(None, error="cancelled")
+
+  def showEvent(self, event) -> None:
+    """Grab keyboard focus when the editor becomes visible."""
+    super().showEvent(event)
+    self.raise_()
+    self.activateWindow()
+    self.setFocus()
 
   def closeEvent(self, event: QCloseEvent) -> None:
     if not self._saved:

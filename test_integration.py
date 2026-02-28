@@ -260,10 +260,26 @@ class TestConfigMigration:
     v2_config = dict(main.DEFAULT_CONFIG)
     v2_config["config_version"] = 2
     del v2_config["annotate_captures"]
+    # Also remove v4 keys for clean v2 simulation
+    for k in ("annotate_shift_tool", "annotate_ctrl_tool", "annotate_alt_tool"):
+      v2_config.pop(k, None)
     changed = migrate_config(v2_config)
     assert changed is True
     assert v2_config["annotate_captures"] is False
     assert v2_config["config_version"] == CONFIG_VERSION
+
+  def test_v3_to_v4_adds_modifier_tool_keys(self):
+    v3_config = dict(main.DEFAULT_CONFIG)
+    v3_config["config_version"] = 3
+    del v3_config["annotate_shift_tool"]
+    del v3_config["annotate_ctrl_tool"]
+    del v3_config["annotate_alt_tool"]
+    changed = migrate_config(v3_config)
+    assert changed is True
+    assert v3_config["annotate_shift_tool"] == "arrow"
+    assert v3_config["annotate_ctrl_tool"] == "oval"
+    assert v3_config["annotate_alt_tool"] == "text"
+    assert v3_config["config_version"] == CONFIG_VERSION
 
   def test_load_triggers_migration(self, tmp_path, monkeypatch):
     monkeypatch.setattr(main, "CONFIG_PATH", str(tmp_path / "config.json"))

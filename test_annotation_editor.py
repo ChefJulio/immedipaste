@@ -12,8 +12,9 @@ app = QApplication.instance() or QApplication([])
 
 from annotation_editor import (
   FreehandAnnotation, ArrowAnnotation, OvalAnnotation, RectAnnotation,
-  TextAnnotation, AnnotationEditor, ARROW_STYLES, DEFAULT_COLOR,
-  DEFAULT_STROKE_WIDTH, DEFAULT_FONT_SIZE,
+  TextAnnotation, AnnotationEditor, AnnotationToolbar, ARROW_STYLES,
+  DEFAULT_COLOR, DEFAULT_STROKE_WIDTH, DEFAULT_FONT_SIZE,
+  _DEFAULT_MODIFIER_TOOLS,
 )
 
 
@@ -82,11 +83,10 @@ class TestDataModel:
     assert ann.font_size == 16
 
   def test_arrow_styles_defined(self):
-    assert len(ARROW_STYLES) == 4
-    assert "standard" in ARROW_STYLES
+    assert len(ARROW_STYLES) == 3
     assert "open" in ARROW_STYLES
+    assert "standard" in ARROW_STYLES
     assert "double" in ARROW_STYLES
-    assert "thick" in ARROW_STYLES
 
 
 # -- Compositing --------------------------------------------------------------
@@ -333,10 +333,10 @@ class TestToolFromModifiers:
     assert tool == "oval"
     editor.close()
 
-  def test_alt_gives_rect(self, tmp_path):
+  def test_alt_gives_text_by_default(self, tmp_path):
     editor = self._make_editor(tmp_path)
     tool = editor._tool_from_modifiers(Qt.KeyboardModifier.AltModifier)
-    assert tool == "rect"
+    assert tool == "text"
     editor.close()
 
   def test_no_modifier_gives_toolbar_default(self, tmp_path):
@@ -351,3 +351,55 @@ class TestToolFromModifiers:
     tool = editor._tool_from_modifiers(mods)
     assert tool == "arrow"
     editor.close()
+
+  def test_custom_modifier_tools(self, tmp_path):
+    img = make_test_image()
+    custom = {"shift": "rect", "ctrl": "freehand", "alt": "arrow"}
+    editor = AnnotationEditor(
+      qimage=img, save_folder=str(tmp_path), on_done=MagicMock(),
+      modifier_tools=custom,
+    )
+    assert editor._tool_from_modifiers(Qt.KeyboardModifier.ShiftModifier) == "rect"
+    assert editor._tool_from_modifiers(Qt.KeyboardModifier.ControlModifier) == "freehand"
+    assert editor._tool_from_modifiers(Qt.KeyboardModifier.AltModifier) == "arrow"
+    editor.close()
+
+  def test_none_tool_falls_back_to_toolbar(self, tmp_path):
+    img = make_test_image()
+    custom = {"shift": "none", "ctrl": "oval", "alt": "text"}
+    editor = AnnotationEditor(
+      qimage=img, save_folder=str(tmp_path), on_done=MagicMock(),
+      modifier_tools=custom,
+    )
+    # "none" should fall back to toolbar default (freehand)
+    tool = editor._tool_from_modifiers(Qt.KeyboardModifier.ShiftModifier)
+    assert tool == "freehand"
+    editor.close()
+
+
+# -- Toolbar tooltips ---------------------------------------------------------
+
+class TestToolbarTooltips:
+  def test_default_tooltips(self):
+    toolbar = AnnotationToolbar()
+    assert "Shift + drag" in toolbar._arrow_btn.toolTip()
+    assert "Ctrl + drag" in toolbar._oval_btn.toolTip()
+    assert "Alt + click" in toolbar._text_btn.toolTip()
+    toolbar.close()
+
+  def test_custom_modifier_tooltips(self):
+    custom = {"shift": "rect", "ctrl": "arrow", "alt": "freehand"}
+    toolbar = AnnotationToolbar(modifier_tools=custom)
+    assert "Shift + drag" in toolbar._rect_btn.toolTip()
+    assert "Ctrl + drag" in toolbar._arrow_btn.toolTip()
+    assert "Alt + drag" in toolbar._freehand_btn.toolTip()
+    toolbar.close()
+
+  def test_no_shortcut_shows_plain_name(self):
+    custom = {"shift": "arrow", "ctrl": "oval", "alt": "none"}
+    toolbar = AnnotationToolbar(modifier_tools=custom)
+    # Text has no modifier assigned, should show plain "Text (click to place)"
+    assert toolbar._text_btn.toolTip() == "Text (click to place)"
+    # Rect has no modifier assigned
+    assert toolbar._rect_btn.toolTip() == "Rectangle"
+    toolbar.close()
