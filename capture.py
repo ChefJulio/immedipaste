@@ -244,7 +244,9 @@ class CaptureOverlay(QWidget):
 
     timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")[:-3]  # milliseconds
     ext = self.fmt
-    filepath = os.path.join(folder, f"{self.filename_prefix}_{timestamp}.{ext}")
+    # Strip path separators and traversal from prefix to prevent writing outside save folder
+    safe_prefix = self.filename_prefix.replace("/", "_").replace("\\", "_").replace("..", "_")
+    filepath = os.path.join(folder, f"{safe_prefix}_{timestamp}.{ext}")
 
     if ext in ("jpg", "jpeg"):
       ok = qimage.save(filepath, "JPEG", 85)

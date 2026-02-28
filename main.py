@@ -405,8 +405,8 @@ class SettingsDialog(QDialog):
 
   def _position_near_tray(self) -> None:
     screen = QApplication.primaryScreen().geometry()
-    x = screen.width() - self.width() - 16
-    y = screen.height() - self.height() - 60
+    x = screen.x() + screen.width() - self.width() - 16
+    y = screen.y() + screen.height() - self.height() - 60
     self.move(x, y)
 
   def _emit_change(self, *_args: Any) -> None:
@@ -805,13 +805,16 @@ def acquire_single_instance() -> IO[str]:
         try:
           _try_lock(lock_file)
         except OSError:
+          lock_file.close()
           log.info("Another instance is already running, exiting")
           sys.exit(0)
       else:
+        lock_file.close()
         log.info("Another instance is already running, exiting")
         sys.exit(0)
     else:
       # No readable timestamp -- assume active
+      lock_file.close()
       log.info("Another instance is already running, exiting")
       sys.exit(0)
 

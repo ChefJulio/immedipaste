@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 from PySide6.QtGui import QImage, QColor
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon
 
 app = QApplication.instance() or QApplication([])
 
@@ -37,7 +37,8 @@ class TestCapturePipeline:
     fake_img = QImage(200, 150, QImage.Format.Format_ARGB32)
     fake_img.fill(QColor(0, 128, 255))
 
-    with patch("capture.mss.mss") as mock_mss:
+    with patch("capture.mss.mss") as mock_mss, \
+         patch("capture.copy_image_to_clipboard", return_value=True):
       ctx = MagicMock()
       ctx.monitors = [{"left": 0, "top": 0, "width": 200, "height": 150}]
       grab_result = MagicMock()
@@ -52,10 +53,11 @@ class TestCapturePipeline:
 
     # Should no longer be capturing
     assert ip.capturing is False
-    # Tray notification was shown
+    # Verify success notification (not error)
     ip.tray_icon.showMessage.assert_called_once()
-    call_args = ip.tray_icon.showMessage.call_args
-    assert "ImmediPaste" in call_args[0]
+    call_args = ip.tray_icon.showMessage.call_args[0]
+    assert call_args[0] == "ImmediPaste"
+    assert call_args[2] == QSystemTrayIcon.MessageIcon.Information
 
   def test_fullscreen_capture_clipboard_only(self, tmp_path, monkeypatch):
     ip = self._make_app(tmp_path, monkeypatch)
@@ -81,7 +83,6 @@ class TestCapturePipeline:
     # Verify success notification (Information icon, "Copied to clipboard")
     call_args = ip.tray_icon.showMessage.call_args[0]
     assert call_args[1] == "Copied to clipboard"
-    from PySide6.QtWidgets import QSystemTrayIcon
     assert call_args[2] == QSystemTrayIcon.MessageIcon.Information
 
   def test_screenshot_failure_shows_error(self, tmp_path, monkeypatch):
