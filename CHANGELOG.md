@@ -6,7 +6,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
 
 ## Config v5 (current)
 
-- `-------` Default annotation tool setting, filename suffix customization, config v5
+- `e45f3ad` Default annotation tool setting, filename suffix customization, config v5
   - New config keys: `annotate_default_tool` (default freehand), `filename_suffix` (strftime format)
   - Settings UI: "Default (no modifier)" combo added to annotation tool mapping section
   - Filename suffix field in settings for customizing date/time format in filenames
@@ -23,7 +23,7 @@ Format: `hash` or `-------` (pending) followed by description. Pending hashes ge
   - Options per modifier: Arrow, Oval, Rectangle, Text, Freehand, None (toolbar default)
   - Toolbar tooltips update dynamically to reflect configured modifier shortcuts
   - 6 new tests (106 total): custom modifier tools, "none" fallback, tooltip updates, migration v3->v4
-- `-------` Remove arrow box drag mode; stroke width spinner controls arrow wideness directly
+- `e45f3ad` Remove arrow box drag mode; stroke width spinner controls arrow wideness directly
   - Removed unintuitive Line/Box toggle button from annotation toolbar
   - Removed `drag_mode` and `rect` fields from ArrowAnnotation dataclass
   - Simplified `_arrow_dimensions` to use stroke width directly (shaft=width, head=width*4)
