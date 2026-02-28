@@ -21,7 +21,7 @@ class TestLoadConfig:
     assert not config_file.exists()
     cfg = main.load_config()
     assert config_file.exists()
-    assert cfg["format"] == "jpg"
+    assert cfg["format"] == "png"
     assert cfg["save_to_disk"] is True
     assert cfg["hotkey_region"] == "<ctrl>+<alt>+<shift>+s"
 
@@ -38,7 +38,7 @@ class TestLoadConfig:
     assert cfg == main.DEFAULT_CONFIG
     # Should have overwritten the corrupt file
     restored = json.loads(config_file.read_text())
-    assert restored["format"] == "jpg"
+    assert restored["format"] == "png"
 
   def test_returns_defaults_on_read_error(self, config_file, monkeypatch):
     # Point to a path that exists but can't be read (directory)

@@ -572,7 +572,7 @@ class AnnotationTextInput(QLineEdit):
 class AnnotationEditor(QWidget):
   """Fullscreen annotation editor for captured screenshots."""
 
-  def __init__(self, qimage: QImage, save_folder: str, fmt: str = "jpg",
+  def __init__(self, qimage: QImage, save_folder: str, fmt: str = "png",
                save_to_disk: bool = True, filename_prefix: str = "screenshot",
                filename_suffix: str = "%Y-%m-%d_%H-%M-%S",
                on_done: Callable[..., None] | None = None,

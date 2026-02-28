@@ -20,7 +20,7 @@ log = get_logger("capture")
 class CaptureOverlay(QWidget):
   """Fullscreen overlay for region or window capture."""
 
-  def __init__(self, save_folder: str, fmt: str = "jpg", save_to_disk: bool = True,
+  def __init__(self, save_folder: str, fmt: str = "png", save_to_disk: bool = True,
                filename_prefix: str = "screenshot",
                filename_suffix: str = "%Y-%m-%d_%H-%M-%S",
                on_done: Callable[..., None] | None = None,

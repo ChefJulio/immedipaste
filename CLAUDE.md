@@ -109,7 +109,7 @@ Last 5 captures stored in `capture_history` list (`MAX_HISTORY = 5`). Shown in t
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_window": "<ctrl>+<alt>+<shift>+d",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+f",
-  "format": "jpg",
+  "format": "png",
   "filename_prefix": "screenshot",
   "filename_suffix": "%Y-%m-%d_%H-%M-%S",
   "save_to_disk": True,

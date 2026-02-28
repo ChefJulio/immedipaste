@@ -41,7 +41,7 @@ DEFAULT_CONFIG = {
   "hotkey_region": "<ctrl>+<alt>+<shift>+s",
   "hotkey_window": "<ctrl>+<alt>+<shift>+d",
   "hotkey_fullscreen": "<ctrl>+<alt>+<shift>+f",
-  "format": "jpg",
+  "format": "png",
   "filename_prefix": "screenshot",
   "filename_suffix": "%Y-%m-%d_%H-%M-%S",
   "save_to_disk": True,
@@ -361,8 +361,8 @@ class SettingsDialog(QDialog):
 
     # Format
     self.fmt_combo = QComboBox()
-    self.fmt_combo.addItems(["jpg", "png", "webp"])
-    self.fmt_combo.setCurrentText(config.get("format", "jpg"))
+    self.fmt_combo.addItems(["png", "jpg", "webp"])
+    self.fmt_combo.setCurrentText(config.get("format", "png"))
     form.addRow("Save format:", self.fmt_combo)
 
     # Filename prefix
@@ -559,7 +559,7 @@ class ImmediPaste:
     self._editor = AnnotationEditor(
       qimage=qimage,
       save_folder=self.config["save_folder"],
-      fmt=self.config.get("format", "jpg"),
+      fmt=self.config.get("format", "png"),
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "screenshot"),
       filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
@@ -580,7 +580,7 @@ class ImmediPaste:
 
     self._overlay = CaptureOverlay(
       save_folder=self.config["save_folder"],
-      fmt=self.config.get("format", "jpg"),
+      fmt=self.config.get("format", "png"),
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "screenshot"),
       filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
@@ -607,7 +607,7 @@ class ImmediPaste:
 
     self._overlay = CaptureOverlay(
       save_folder=self.config["save_folder"],
-      fmt=self.config.get("format", "jpg"),
+      fmt=self.config.get("format", "png"),
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "screenshot"),
       filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),
@@ -625,7 +625,7 @@ class ImmediPaste:
 
     self._overlay = CaptureOverlay(
       save_folder=self.config["save_folder"],
-      fmt=self.config.get("format", "jpg"),
+      fmt=self.config.get("format", "png"),
       save_to_disk=self.config.get("save_to_disk", True),
       filename_prefix=self.config.get("filename_prefix", "screenshot"),
       filename_suffix=self.config.get("filename_suffix", "%Y-%m-%d_%H-%M-%S"),

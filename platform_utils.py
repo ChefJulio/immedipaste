@@ -28,7 +28,7 @@ def copy_image_to_clipboard(qimage: QImage) -> bool:
     return False
 
 
-def save_qimage(qimage: QImage, save_folder: str, fmt: str = "jpg",
+def save_qimage(qimage: QImage, save_folder: str, fmt: str = "png",
                 filename_prefix: str = "screenshot",
                 filename_suffix: str = "%Y-%m-%d_%H-%M-%S") -> str | None:
   """Save a QImage to disk. Returns the filepath on success, None on failure."""
